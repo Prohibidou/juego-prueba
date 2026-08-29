@@ -57,6 +57,11 @@ const CAM_UMBRAL_QUIETO := 0.3 # m/s: por debajo, "quieto" para la camara (igual
 const CAM_GIRO_MAX := 3.5      # rad/s
 const CAM_SUAVIZADO := 14.0
 const CAM_FOV_SUAVIZADO := 4.0 # el fov va mas lento que la posicion: asi se nota
+# Con el muelle de por medio (galpones, el barco, la jaula) la camara detras
+# del piche se metia dentro de la primera pared que encontraba. Un rayo desde
+# el piche hasta el punto ideal la trae para adelante hasta justo antes de esa
+# pared, en vez de dejarla atravesarla.
+const CAM_COLISION_MARGEN := 0.25  # cuanto se aparta de la pared, para no clavar el lente
 # --------------
 
 # --- mando ---
@@ -84,6 +89,8 @@ var cine_offset := Vector3.ZERO   # desde donde se mira, RELATIVO a la bola
 var puede_saltar := true     # sin stamina no hay impulso; lo pone juego.gd
 var timon := 0.0             # -1..1 para dirigir en el aire; lo lee juego.gd
 var suelo: Callable          # (x, z) -> altura del terreno
+
+var campo: Campo   # solo para la lista "excluir" del rayo de camara: lo pone juego.gd
 
 var _bola: RigidBody3D
 var _camara: Camera3D
@@ -260,14 +267,34 @@ func objetivo_camara(dt := 0.0) -> Vector3:
 	if activo:
 		var atras := CAM_ATRAS_JAULA if enjaulado else CAM_ATRAS_TIRO
 		var alto := CAM_ALTO_JAULA if enjaulado else CAM_ALTO
-		return _bola.global_position - Vector3(sin(mira), 0, cos(mira)) * atras \
-			+ Vector3.UP * alto
+		var desde := _bola.global_position + Vector3.UP * alto
+		var objetivo := desde - Vector3(sin(mira), 0, cos(mira)) * atras
+		return _sin_pared(desde, objetivo)
 	var plana := Vector3(_bola.linear_velocity.x, 0, _bola.linear_velocity.z)
 	if plana.length() > CAM_UMBRAL_QUIETO:
 		_dir_camara = _girar_hacia(_dir_camara, plana.normalized(), CAM_GIRO_MAX * dt)
 	var t := _factor_velocidad()
-	return _bola.global_position - _dir_camara * lerpf(CAM_ATRAS_MIN, CAM_ATRAS_MAX, t) \
-		+ Vector3.UP * CAM_ALTO
+	var desde := _bola.global_position + Vector3.UP * CAM_ALTO
+	var objetivo := desde - _dir_camara * lerpf(CAM_ATRAS_MIN, CAM_ATRAS_MAX, t)
+	return _sin_pared(desde, objetivo)
+
+
+## Trae la camara para adelante si entre "desde" (pegado al piche) y el punto
+## ideal hay una pared de por medio: sin esto, en el muelle la camara se metia
+## dentro de galpones y del casco del barco en vez de rebotar antes de tocarlos.
+func _sin_pared(desde: Vector3, objetivo: Vector3) -> Vector3:
+	var esp := get_world_3d().direct_space_state
+	if esp == null or desde == objetivo:
+		return objetivo
+	var q := PhysicsRayQueryParameters3D.create(desde, objetivo)
+	# la misma lista que usa campo.altura_terreno() para no pisar la bola ni
+	# las paredes de la jaula: sin esto, encuadrar desde fuera de la jaula
+	# chocaba con sus propios barrotes y la camara se quedaba pegada a ellos.
+	q.exclude = campo.excluir if campo else [_bola.get_rid()]
+	var choque := esp.intersect_ray(q)
+	if not choque:
+		return objetivo
+	return choque["position"] + choque["normal"] * CAM_COLISION_MARGEN
 
 
 ## 0 con la bola parada, 1 a CAM_VEL_REF. Manda el encuadre y el fov.

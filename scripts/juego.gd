@@ -28,14 +28,10 @@ const AIRE_TIEMPO := 1.1    # segundos de timon por golpe
 const CONDUCE_ACEL := 7.0   # m/s2 que mete el stick izquierdo
 const CONDUCE_MAX := 4.5    # m/s: es andar, no un golpe
 const GIRO_MAX := 9.0       # rad/s: por encima de esto la vuelta es un borron
-# --- stamina y correa ---
-# Andar es gratis pero solo alrededor de donde caiste; para ir mas lejos hay
-# que saltar. El salto no gasta stamina, solo el impulso (G) la consume. La
+# --- stamina ---
+# Se anda libre, sin radio: lo unico que cuesta stamina es el impulso (G). La
 # basura del campo la repone: es lo que obliga a desviarse de la linea recta
 # al hoyo.
-const RADIO_ANDAR := 5.0
-const PASOS_LIMITE := 32      # puntos por anillo del suelo pintado
-const ANILLOS := 3            # anillos concentricos: mas, mejor se pega al relieve
 const STAMINA_MAX := 100.0
 const STAMINA_BASURA := 20.0
 const STAMINA_IMPULSO := 60.0 # lo que cuesta el impulso (G) a barra llena
@@ -115,8 +111,6 @@ var _ultimo := 0.0        # distancia del ultimo golpe, para el aviso
 var _diam_bola := 1.0     # tamano del modelo tal cual viene, en sus unidades
 var _caja_bola := AABB()
 var stamina := STAMINA_MAX
-var _ancla := Vector3.ZERO               # centro del circulo en el que se anda
-var _limite: MeshInstance3D
 var _jaula: Node3D
 var _puerta: MeshInstance3D
 var _bisagra: Node3D          # de ella cuelga la puerta desde el principio
@@ -127,7 +121,8 @@ var _caja_cuerpo := AABB()    # el cuerpo en sus ejes; se mide antes de colgar
 var _caja_puerta := AABB()    # la puerta en ejes de la jaula; no cambia nunca
 var _tapa: StaticBody3D
 var _pulso_salto := false     # para detectar el flanco del espacio
-var _saltando := false        # brinco en curso: sin correa y sin soltar el mando
+var _saltando := false        # brinco en curso: sin soltar el mando
+var _vel_andar := 0.0         # velocidad de _conducir(): solo sube con mando, nunca con el terreno
 var _angulo_rueda := 0.0                 # cuanto lleva rodado
 var _eje_rueda := Vector3.RIGHT          # el eje del disco: su cara plana
 var _dir_rueda := Vector3.FORWARD
@@ -185,7 +180,6 @@ func _ready() -> void:
 	add_child(entorno)
 
 	_crear_bola()
-	_crear_limite()
 	_crear_ui()
 
 	golpe = $Golpe
@@ -195,6 +189,7 @@ func _ready() -> void:
 	campo = Campo.new()
 	add_child(campo)
 	campo.excluir = [bola.get_rid()]
+	golpe.campo = campo   # para que el rayo de colision de la camara no pise la jaula
 	msg.text = "Cargando el campo..."
 	await campo.preparar()
 	msg.text = ""
@@ -455,55 +450,6 @@ func _tirar_puerta() -> void:
 	_puerta = null
 
 
-func _crear_limite() -> void:
-	_limite = MeshInstance3D.new()
-	_limite.mesh = ImmediateMesh.new()
-	var m := Util.mat(Color.WHITE)
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED   # se mira desde arriba y de lado
-	_limite.material_override = m
-	_limite.top_level = true
-	add_child(_limite)
-
-
-## Fija el centro del circulo donde esta la bola y redibuja el borde.
-func _anclar() -> void:
-	_ancla = bola.global_position
-	# se muestrea en anillos concentricos y se cosen entre si: pintar un solo
-	# disco plano se hundiria en cuanto el terreno tuviera algo de pendiente
-	var aros: Array[PackedVector3Array] = []
-	for k in ANILLOS + 1:
-		var r := RADIO_ANDAR * k / float(ANILLOS)
-		var aro := PackedVector3Array()
-		for i in PASOS_LIMITE:
-			var a := TAU * i / PASOS_LIMITE
-			var x := _ancla.x + cos(a) * r
-			var z := _ancla.z + sin(a) * r
-			# el rayo cae desde un metro sobre la bola, no desde el cielo: asi
-			# no puede pegar en la copa de un arbol y dejar un vertice quince
-			# metros arriba, que convertia el area en un telon rojo. El acotado
-			# se queda por si el rayo no encuentra nada.
-			var h := clampf(campo.altura_terreno(x, z, _ancla.y + 1.0),
-				_ancla.y - 1.2, _ancla.y + 1.0)
-			aro.push_back(Vector3(x, h + 0.08, z))
-		aros.append(aro)
-
-	var im: ImmediateMesh = _limite.mesh
-	im.clear_surfaces()
-	im.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
-	for k in ANILLOS:
-		for i in PASOS_LIMITE:
-			var j := (i + 1) % PASOS_LIMITE
-			im.surface_add_vertex(aros[k][i])
-			im.surface_add_vertex(aros[k + 1][i])
-			im.surface_add_vertex(aros[k + 1][j])
-			im.surface_add_vertex(aros[k][i])
-			im.surface_add_vertex(aros[k + 1][j])
-			im.surface_add_vertex(aros[k][j])
-	im.surface_end()
-
-
 func _crear_ui() -> void:
 	var capa := CanvasLayer.new()
 	add_child(capa)
@@ -574,6 +520,7 @@ func _poner_bola(donde: Vector3) -> void:
 	bola.angular_damp = 0.6
 	quieto = true
 	_saltando = false
+	_vel_andar = 0.0
 	_en_aire = false
 	_giro = 0.0
 	estela.emitting = false
@@ -583,7 +530,6 @@ func _poner_bola(donde: Vector3) -> void:
 	_portazo = 1.0
 	_mira_rueda = golpe.mira  # que no arranque girando por la diferencia con la mira anterior
 	_aplicar_damp()
-	_anclar()
 
 
 func _aplicar_damp() -> void:
@@ -636,12 +582,7 @@ func _process(dt: float) -> void:
 		_saltar()
 	_pulso_salto = salta
 
-	# el suelo es rojizo siempre, que es lo que marca el area; se satura cuando
-	# ya no queda para el impulso. El verde/rojo de la stamina vive en su barra.
 	var hay := stamina >= STAMINA_MIN
-	_limite.visible = golpe.activo and not _enjaulado()
-	_limite.material_override.albedo_color = (Color(0.85, 0.25, 0.20, 0.26)
-		if hay else Color(1.0, 0.18, 0.12, 0.42))
 	barra_stam.value = stamina
 	barra_stam.modulate = Color(0.45, 1.0, 0.55) if hay else Color(1.0, 0.4, 0.35)
 
@@ -687,10 +628,9 @@ func _physics_process(dt: float) -> void:
 		return
 
 	if quieto:
-		_conducir()
+		_conducir(dt)
 		if _saltando:
 			_aterrizar()
-		_atar()
 		# tambien vale meterlo rodando: es la parte de "llevalo tu" de SBG
 		if campo.embocada(bola.global_position):
 			_embocar()
@@ -767,13 +707,13 @@ func _physics_process(dt: float) -> void:
 			bola.angular_velocity = Vector3.ZERO
 			bola.freeze = true
 			quieto = true
+			_vel_andar = 0.0
 			_ultimo = Vector2(pos.x - _desde.x, pos.z - _desde.z).length()
 			if _enjaulado():
 				# por si el impulso no llego a tocarla: siempre la tira, o el
 				# jugador se quedaria encerrado gastando golpes
 				_tirar_puerta()
 				_abrir_puerta()
-			_anclar()
 			_aviso("%d m" % roundi(_ultimo), 1.6)
 	else:
 		_t_lento = 0.0
@@ -781,9 +721,9 @@ func _physics_process(dt: float) -> void:
 
 
 ## El stick izquierdo rueda el piche mientras esta parado. En el aire ese mismo
-## stick es el timon, asi que no se pisan. El tope de velocidad es lo que separa
-## andar de pegar: para cruzar el campo hay que golpear.
-func _conducir() -> void:
+## stick es el timon, asi que no se pisan. CONDUCE_MAX topa la velocidad de
+## andar; para cruzar el campo de verdad hay que golpear.
+func _conducir(dt: float) -> void:
 	var dir: Vector3 = golpe.mando()
 	if dir == Vector3.ZERO:
 		# sin mando no se mueve nada. Si quedo descongelada de un empujon
@@ -793,46 +733,29 @@ func _conducir() -> void:
 		#
 		# En pleno brinco no: el salto no saca de "quieto", asi que soltar el
 		# stick en el aire dejaba al piche congelado a media altura.
+		_vel_andar = 0.0
 		if not bola.freeze and not _saltando:
 			bola.linear_velocity = Vector3.ZERO
 			bola.angular_velocity = Vector3.ZERO
 			bola.freeze = true
 		return
-	if Vector3(bola.linear_velocity.x, 0, bola.linear_velocity.z).length() > CONDUCE_MAX:
-		return
-	# la correa: andando no se sale del circulo. En el borde se deja empujar
-	# hacia dentro, si no se quedaria pegado al limite sin poder volver.
-	var fuera := Vector2(bola.global_position.x - _ancla.x,
-		bola.global_position.z - _ancla.z)
-	if not _saltando and fuera.length() >= RADIO_ANDAR \
-			and Vector2(dir.x, dir.z).dot(fuera.normalized()) > 0.0:
-		return
 	bola.freeze = false      # congelada no admite fuerzas
-	# que una pendiente no desvie el rumbo: se descarta la parte de la
-	# velocidad que no va en la linea de "dir" (adelante/atras), que es lo
-	# unico que el jugador esta pidiendo. Sin esto, en una bajada la
-	# gravedad la iba corriendo de costado aunque se empujara derecho.
+	# la velocidad de andar la lleva ESTA variable, no lo que traiga ya
+	# bola.linear_velocity: si se leyera de ahi, una pendiente le sumaria
+	# tirón propio (gravedad ladera abajo) y el piche se moveria solo con
+	# el mando quieto o incluso soltado a medias, que es justo lo que no
+	# tiene que pasar. Aqui solo sube si hay mando, con la propia
+	# aceleracion de andar, y nunca por fisica del terreno.
+	_vel_andar = minf(CONDUCE_MAX, _vel_andar + CONDUCE_ACEL * dt)
 	var recta := dir.normalized()
-	var horizontal := Vector3(bola.linear_velocity.x, 0, bola.linear_velocity.z)
-	bola.linear_velocity = recta * horizontal.dot(recta) + Vector3.UP * bola.linear_velocity.y
-	bola.apply_central_force(dir * CONDUCE_ACEL * Util.MASA)
+	bola.linear_velocity = recta * _vel_andar + Vector3.UP * bola.linear_velocity.y
 
 
-## Andando no se sale del circulo. No basta con dejar de empujar: con la
-## inercia se cruzaba igual. Se le quita la velocidad que apunta hacia fuera y
-## se le devuelve al borde.
-##
-## ponytail: mover un cuerpo rigido a mano fuera de _integrate_forces no es lo
-## fino, pero aqui son centimetros y solo en el borde. Si diera guerra, lo suyo
-## seria un muro de colision cilindrico que se mueve con el ancla.
-## El salto (espacio) despega con lo que ya lleve encima, pero no desbloquea el
-## area: la correa sigue tirando aunque este en el aire, asi que solo el
-## impulso (G) saca de verdad del circulo.
-##
-## No toca `quieto`. Sacar la bola de ese estado la metia por el camino del
-## golpe: la camara se iba atras, el area desaparecia y al caer salia el aviso
-## de distancia. O sea que un brinco se veia igual que un impulso y cortaba el
-## juego. Aqui se sigue andando, solo que por el aire.
+## El salto (espacio) despega con lo que ya lleve encima. No toca `quieto`:
+## sacar la bola de ese estado la metia por el camino del golpe -la camara se
+## iba atras y al caer salia el aviso de distancia-, asi que un brinco se veia
+## igual que un impulso y cortaba el juego. Aqui se sigue andando, solo que
+## por el aire.
 func _saltar() -> void:
 	if _saltando or not (listo and quieto and not embocada):
 		return
@@ -923,9 +846,7 @@ func _cine_portazo() -> void:
 	golpe.fin_cine()
 
 
-## Cierra el brinco al tocar suelo bajando. No reancla: si lo hiciera, saltar
-## una y otra vez correria el circulo poco a poco sin gastar el impulso, y el
-## salto se convertiria en la forma real de desbloquear el area.
+## Cierra el brinco al tocar suelo bajando.
 func _aterrizar() -> void:
 	var p := bola.global_position
 	if bola.linear_velocity.y > 0.0 or p.y > campo.altura_terreno(p.x, p.z) + Util.RADIO + 0.06:
@@ -938,31 +859,15 @@ func _enjaulado() -> bool:
 	return is_instance_valid(_tapa)
 
 
-## Otra pregunta distinta de _enjaulado(): esa mira si la puerta sigue puesta,
-## que es lo que ata la correa. Esta mira si el piche sigue entre los barrotes,
-## que es lo que aparta la camara. Al caer la puerta la jaula sigue ahi, y sin
-## esto la camara se metia dentro a mirar los barrotes.
+## Otra pregunta distinta de _enjaulado(): esa mira si la puerta sigue puesta.
+## Esta mira si el piche sigue entre los barrotes, que es lo que aparta la
+## camara. Al caer la puerta la jaula sigue ahi, y sin esto la camara se metia
+## dentro a mirar los barrotes.
 func _en_la_jaula() -> bool:
 	if not is_instance_valid(_jaula):
 		return false
 	return Vector2(bola.global_position.x - _jaula.global_position.x,
 		bola.global_position.z - _jaula.global_position.z).length() < 1.8
-
-
-func _atar() -> void:
-	# tambien tira en pleno brinco: saltar no es forma de salir del area, solo
-	# el impulso (G) lo es. De la jaula sacan los muros, no esto.
-	var d := Vector2(bola.global_position.x - _ancla.x,
-		bola.global_position.z - _ancla.z)
-	if d.length() <= RADIO_ANDAR:
-		return
-	var n := d.normalized()
-	var fuera := Vector3(n.x, 0, n.y)
-	var salida := bola.linear_velocity.dot(fuera)
-	if salida > 0.0:
-		bola.linear_velocity -= fuera * salida
-	bola.global_position = Vector3(_ancla.x + n.x * RADIO_ANDAR,
-		bola.global_position.y, _ancla.z + n.y * RADIO_ANDAR)
 
 
 func _marca(pos: Vector3, v: float) -> void:
@@ -1132,18 +1037,8 @@ func _self_check() -> void:
 	assert(absf(campo.altura_terreno(bola.global_position.x, bola.global_position.z)
 		- (bola.global_position.y - Util.RADIO)) < 0.2,
 		"la jaula tapa los rayos de altura")
-	# la correa: se le empuja lejos y tiene que volver al borde de la que toque
 	var vuelve := bola.global_position
-	bola.global_position = vuelve + Vector3(RADIO_ANDAR * 3.0, 0, 0)
-	bola.linear_velocity = Vector3(9.0, 0, 0)
-	_atar()
-	assert(Vector2(bola.global_position.x - _ancla.x,
-		bola.global_position.z - _ancla.z).length() <= RADIO_ANDAR + 0.001,
-		"el piche se sale de la correa")
-	assert(bola.linear_velocity.x <= 0.001, "no se le quita la velocidad de salida")
-	bola.global_position = vuelve
-	bola.linear_velocity = Vector3.ZERO
-	# y sin stamina no hay impulso
+	# sin stamina no hay impulso
 	var stamina_previa := stamina
 	stamina = 0.0
 	golpe.puede_saltar = false
@@ -1161,13 +1056,6 @@ func _self_check() -> void:
 	assert(stamina == stamina_salto, "el salto gasta stamina")
 	assert(quieto and golpe.activo, "el salto corta el estado de andar")
 	assert(_saltando, "el salto no queda marcado como brinco")
-	# y en pleno brinco la correa sigue tirando: solo el impulso desbloquea
-	bola.global_position = vuelve + Vector3(RADIO_ANDAR * 3.0, 0, 0)
-	bola.linear_velocity = Vector3(9.0, 0, 0)
-	_atar()
-	assert(Vector2(bola.global_position.x - _ancla.x,
-		bola.global_position.z - _ancla.z).length() <= RADIO_ANDAR + 0.001,
-		"el salto se sale de la correa")
 	bola.global_position = vuelve
 	bola.linear_velocity = Vector3.ZERO
 	bola.freeze = true

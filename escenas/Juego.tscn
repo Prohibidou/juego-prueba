@@ -1,10 +1,10 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene format=3 uid="uid://bylh5uocmyxo3"]
 
-[ext_resource type="Script" path="res://scripts/juego.gd" id="1_juego"]
-[ext_resource type="Script" path="res://scripts/golpe.gd" id="2_golpe"]
+[ext_resource type="Script" uid="uid://c5lun48aur4vd" path="res://scripts/juego.gd" id="1_juego"]
+[ext_resource type="Script" uid="uid://twum5knlwid8" path="res://scripts/golpe.gd" id="2_golpe"]
 
-[node name="Juego" type="Node3D"]
+[node name="Juego" type="Node3D" unique_id=1662410881]
 script = ExtResource("1_juego")
 
-[node name="Golpe" type="Node3D" parent="."]
+[node name="Golpe" type="Node3D" parent="." unique_id=880227739]
 script = ExtResource("2_golpe")
