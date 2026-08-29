@@ -13,10 +13,10 @@ const VEL_MARCA := 15.0
 const PENA_ANIMAL := 2
 const PENA_DROP := 1
 const MAX_MARCAS := 30
-# El modelo viene en centimetros. A escala real la bola son 4 cm: a 20 m ya no
-# se ve. Se dibuja agrandada en proporcion a la distancia, de modo que ocupa
-# SIEMPRE lo mismo en pantalla. La colision sigue siendo de 4 cm.
-const ESCALA_BOLA := 0.01
+# A escala real la bola son 4 cm: a 20 m ya no se ve. Se dibuja agrandada en
+# proporcion a la distancia, de modo que ocupa SIEMPRE lo mismo en pantalla. La
+# colision sigue siendo la esfera de 4 cm.
+const MODELO_BOLA := "res://modelos/PicheLowHighTest07.obj"
 const DIST_REF := 1.15    # baja este numero y la bola se ve mas grande
 const AGRANDA_MAX := 25.0
 # ----------------------------
@@ -34,6 +34,8 @@ var _giro := 0.0
 var _en_aire := false
 var _desde := Vector3.ZERO
 var _ultimo := 0.0        # distancia del ultimo golpe, para el aviso
+var _escala_bola := 1.0   # sale del tamano del modelo, no de un numero a ojo
+var _centro_bola := Vector3.ZERO
 var _marcas: Array = []
 
 var campo: Campo
@@ -116,8 +118,13 @@ func _crear_bola() -> void:
 	bola.add_child(col)
 
 	vista = MeshInstance3D.new()
-	vista.mesh = load("res://modelos/bola.obj")
-	vista.scale = Vector3.ONE * ESCALA_BOLA
+	vista.mesh = load(MODELO_BOLA)
+	# el modelo no tiene por que venir centrado ni a escala: se ajusta al
+	# diametro real de la bola y se recentra sobre el cuerpo rigido
+	var caja: AABB = vista.mesh.get_aabb()
+	_escala_bola = Util.RADIO * 2.0 / maxf(caja.size[caja.size.max_axis_index()], 0.0001)
+	_centro_bola = caja.get_center()
+	_escalar_vista(1.0)
 	bola.add_child(vista)
 
 	estela = Util.particulas(Color(1, 1, 1, 0.5), 0.4, 20)
@@ -125,6 +132,14 @@ func _crear_bola() -> void:
 	estela.emitting = false
 	bola.add_child(estela)
 	add_child(bola)
+
+
+## El recentrado tiene que ir con la escala: si no, al agrandarse el modelo se
+## desplaza y deja de girar sobre la bola.
+func _escalar_vista(crece: float) -> void:
+	var e := _escala_bola * crece
+	vista.scale = Vector3.ONE * e
+	vista.position = -_centro_bola * e
 
 
 func _crear_ui() -> void:
@@ -243,8 +258,7 @@ func _process(dt: float) -> void:
 	# cuando la camara esta encima y se vería un melon al lado del palo; en
 	# juego se agranda con la distancia, de modo que ocupa siempre lo mismo.
 	var lejos := camara.global_position.distance_to(bola.global_position)
-	var crece := 1.0 if quieto else clampf(lejos / DIST_REF, 1.0, AGRANDA_MAX)
-	vista.scale = Vector3.ONE * ESCALA_BOLA * crece
+	_escalar_vista(1.0 if quieto else clampf(lejos / DIST_REF, 1.0, AGRANDA_MAX))
 
 	barra.value = golpe.fuerza * 100.0
 	var p := bola.global_position

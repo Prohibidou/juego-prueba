@@ -15,6 +15,11 @@ run/main_scene="res://escenas/Juego.tscn"
 config/features=PackedStringArray("4.6", "Mobile")
 config/icon="res://icon.svg"
 
+[autoload]
+
+MCPGameInspector="*res://addons/godot_mcp/services/game_inspector.gd"
+MCPGameInput="*res://addons/godot_mcp/services/game_input.gd"
+
 [display]
 
 window/size/viewport_width=1280
@@ -24,7 +29,12 @@ window/stretch/aspect="expand"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/terrain_3d/plugin.cfg", "res://addons/godot_mcp/plugin.cfg")
+enabled=PackedStringArray("res://addons/godot_mcp/plugin.cfg", "res://addons/terrain_3d/plugin.cfg")
+
+[godot_mcp]
+
+network/port=9080
+network/http_port=9100
 
 [physics]
 
@@ -33,8 +43,3 @@ enabled=PackedStringArray("res://addons/terrain_3d/plugin.cfg", "res://addons/go
 [rendering]
 
 renderer/rendering_method="mobile"
-
-[godot_mcp]
-
-network/port=9080
-network/http_port=9100
