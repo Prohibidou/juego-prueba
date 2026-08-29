@@ -45,7 +45,9 @@ var _desde := Vector3.ZERO
 var _ultimo := 0.0        # distancia del ultimo golpe, para el aviso
 var _diam_bola := 1.0     # tamano del modelo tal cual viene, en sus unidades
 var _caja_bola := AABB()
-var _giro_vista := Basis.IDENTITY
+var _angulo_rueda := 0.0                 # cuanto lleva rodado
+var _eje_rueda := Vector3.RIGHT          # el eje del disco: su cara plana
+var _dir_rueda := Vector3.FORWARD
 var _aire := 0.0          # timon que le queda a este golpe
 var _marcas: Array = []
 
@@ -152,18 +154,25 @@ func _crear_bola() -> void:
 	_escalar_vista(1.0)
 
 
-## El piche rueda sobre su eje al moverse. No sirve la vuelta del cuerpo
-## rigido: la esfera de colision son 2 cm y a 4 m/s giraria a 200 rad/s, un
-## borron. Se rueda como rodaria una bola del tamano DIBUJADO, con tope para
-## que a la velocidad de un drive siga leyendose.
+## El piche no es una bola, es un disco: su lado corto es la X del modelo
+## (1.43 contra 2.05 y 2.17), asi que esa es la cara plana. Rueda como una
+## RUEDA, con la cara plana de eje; acumulando la vuelta sin mas caia de canto
+## y avanzaba de costado.
+##
+## Tampoco vale la vuelta del cuerpo rigido: la esfera de colision son 2 cm y a
+## 4 m/s giraria a 200 rad/s, un borron. Se rueda como rodaria un disco del
+## tamano DIBUJADO, con tope para que a velocidad de drive siga leyendose.
 func _rodar(e: float, dt: float) -> Basis:
 	var plana := Vector3(bola.linear_velocity.x, 0.0, bola.linear_velocity.z)
-	var radio := _diam_bola * e * 0.5
-	if dt > 0.0 and plana.length() > 0.05 and radio > 0.0:
-		var w := minf(plana.length() / radio, GIRO_MAX)
-		_giro_vista = (Basis(Vector3.UP.cross(plana.normalized()), w * dt)
-			* _giro_vista).orthonormalized()
-	return _giro_vista
+	if plana.length() > 0.05:
+		# el eje se recoloca con el rumbo: la rueda gira para seguir la linea
+		_dir_rueda = plana.normalized()
+		_eje_rueda = Vector3.UP.cross(_dir_rueda)
+		var radio := _diam_bola * e * 0.5
+		if dt > 0.0 and radio > 0.0:
+			_angulo_rueda += minf(plana.length() / radio, GIRO_MAX) * dt
+	return Basis(_eje_rueda, _angulo_rueda) \
+		* Basis(_eje_rueda, Vector3.UP, _dir_rueda)
 
 
 ## Junta la caja de todas las mallas del modelo y les da algo de brillo: el
@@ -461,18 +470,21 @@ func _self_check() -> void:
 	assert(is_equal_approx(cerca, _diam_bola * vista.scale.x / 40.0),
 		"la bola no mantiene el tamano en pantalla")
 	# y apoyarse en el suelo con cualquier vuelta, que es lo que se hundia
-	_giro_vista = Basis.from_euler(Vector3(1.1, 0.7, -0.4))
+	_angulo_rueda = 2.1
 	_escalar_vista(6.0)
 	var apoyo: AABB = vista.global_transform * _caja_bola
 	assert(absf(apoyo.position.y - (bola.global_position.y - Util.RADIO)) < 0.001,
 		"el piche no se apoya en el suelo al girar")
-	_giro_vista = Basis.IDENTITY
-	# y rodar sobre su eje al moverse
+	# y rodar como una rueda: la cara plana del disco se queda en el eje de
+	# giro, perpendicular a la marcha, en vez de irse de canto
 	bola.linear_velocity = Vector3(3.0, 0, 0)
+	var antes := _angulo_rueda
 	_escalar_vista(6.0, 0.1)
-	assert(not _giro_vista.is_equal_approx(Basis.IDENTITY), "el piche no rueda")
+	assert(_angulo_rueda > antes, "el piche no rueda")
+	assert(is_zero_approx(_eje_rueda.dot(bola.linear_velocity.normalized())),
+		"la cara plana del disco no queda perpendicular a la marcha")
 	bola.linear_velocity = Vector3.ZERO
-	_giro_vista = Basis.IDENTITY
+	_angulo_rueda = 0.0
 	print("modelo %s | caja %s | diametro %.2f u"
 		% [MODELO_BOLA.get_file(), str(_caja_bola), _diam_bola])
 	print("self-check OK | tee %s | bandera %s | %d m | par %d"
