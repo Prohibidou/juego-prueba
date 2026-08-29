@@ -22,7 +22,7 @@ const PUNTOS_GOLPE := 25    # lo que vale cada golpe ahorrado sobre el par
 # A escala real la bola son 4 cm: a 20 m ya no se ve. Se dibuja agrandada de
 # modo que ocupe SIEMPRE la misma fraccion de la pantalla, calculada con el fov
 # y la distancia reales de la camara. La colision sigue siendo la esfera de 4 cm.
-const MODELO_BOLA := "res://modelos/PicheLowHighTest07.obj"
+const MODELO_BOLA := "res://modelos/PicheLowHighTest07.fbx"
 const VISTA_PANTALLA := 0.075   # subelo y el piche se ve mas grande
 # ----------------------------
 
@@ -46,7 +46,7 @@ var _marcas: Array = []
 
 var campo: Campo
 var bola: RigidBody3D
-var vista: MeshInstance3D
+var vista: Node3D
 var estela: CPUParticles3D
 var camara: Camera3D
 var golpe: Node3D
@@ -125,12 +125,13 @@ func _crear_bola() -> void:
 	col.shape = esf
 	bola.add_child(col)
 
-	vista = MeshInstance3D.new()
-	vista.mesh = load(MODELO_BOLA)
-	# el modelo no tiene por que venir centrado ni a escala: se ajusta al
-	# diametro real de la bola y se recentra sobre el cuerpo rigido
-	_caja_bola = vista.mesh.get_aabb()
-	_diam_bola = maxf(_caja_bola.size[_caja_bola.size.max_axis_index()], 0.0001)
+	# el .fbx es una escena entera (cuerpo, garras y ojos, cada uno con su
+	# material) y trae animaciones sueltas de Blender: una camara y unas cajas
+	# que, si alguna arrancara, moverian el modelo. Fuera.
+	vista = (load(MODELO_BOLA) as PackedScene).instantiate()
+	var reproductor := vista.get_node_or_null("AnimationPlayer")
+	if reproductor:
+		reproductor.free()
 	# la vista se coloca a mano en coordenadas de mundo, no la arrastra la bola
 	vista.top_level = true
 	bola.add_child(vista)
@@ -140,7 +141,30 @@ func _crear_bola() -> void:
 	estela.emitting = false
 	bola.add_child(estela)
 	add_child(bola)
-	_escalar_vista(1.0)   # ya en el arbol: la vista se coloca en mundo
+	# ya en el arbol y sin mover: las cajas globales de las mallas son la caja
+	# del modelo en sus propias unidades
+	_caja_bola = _preparar_modelo(vista)
+	_diam_bola = maxf(_caja_bola.size[_caja_bola.size.max_axis_index()], 0.0001)
+	_escalar_vista(1.0)
+
+
+## Junta la caja de todas las mallas del modelo y les da algo de brillo: el
+## .fbx las exporta con rugosidad 1, y sin un reflejo el piche vuelve a leerse
+## como una silueta plana por muy bien iluminado que este.
+func _preparar_modelo(raiz: Node3D) -> AABB:
+	var caja := AABB()
+	var primera := true
+	for n in raiz.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		var c: AABB = mi.global_transform * mi.mesh.get_aabb()
+		caja = c if primera else caja.merge(c)
+		primera = false
+		for i in mi.mesh.get_surface_count():
+			var mat: StandardMaterial3D = mi.get_active_material(i)
+			if mat:
+				mat.roughness = 0.55
+	assert(not primera, "el modelo de la bola no trae ninguna malla")
+	return caja
 
 
 ## Escala el modelo para que ocupe VISTA_PANTALLA del alto del encuadre, este
@@ -422,6 +446,8 @@ func _self_check() -> void:
 	assert(absf(apoyo.position.y - (bola.global_position.y - Util.RADIO)) < 0.001,
 		"el piche no se apoya en el suelo al girar")
 	bola.global_rotation = Vector3.ZERO
+	print("modelo %s | caja %s | diametro %.2f u"
+		% [MODELO_BOLA.get_file(), str(_caja_bola), _diam_bola])
 	print("self-check OK | tee %s | bandera %s | %d m | par %d"
 		% [str(t.round()), str(b.round()),
 		   roundi(Vector2(t.x - b.x, t.z - b.z).length()), campo.par()])
