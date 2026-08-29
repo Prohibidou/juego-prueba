@@ -88,17 +88,13 @@ const INTRO_JAULA := 0.55     # la jaula, escalada para caber en la caja
 const INTRO_JAULA_POS := Vector3(0.0, 1.05, -1.6)   # sobre la caja
 const INTRO_CAM := Vector3(7.0, 2.4, -1.0)          # en ejes de la camioneta
 # ------------------------
-const JAULA_CUERPO := "res://modelos/PGJ_JaulaBODY.glb"
-const JAULA_PUERTA := "res://modelos/PGJ_JaulaDOOR.glb"
+const JAULA := "res://escenas/Jaula.tscn"
 # El portazo tiene dos tiempos: el piche la EMPUJA y ella cede, y despues se
 # suelta y termina de caer sola. Para que se vea empujada hay que frenar
 # tambien al piche: a 22 m/s la puerta tendria que girar a 129 rad/s para
 # seguirle el ritmo, y eso no es empujar, es desaparecer. Asi que en el
 # impacto el piche baja a una fracción de su velocidad, avanza pegado a la
 # puerta mientras ella gira, y al soltarse recupera todo de golpe.
-const PUERTA_ABRE := 80.0     # grados que cede mientras la empujan
-const PUERTA_CAE := 250.0     # y hasta donde llega ya suelta
-const PUERTA_VUELA := 2.0     # metros que la manda hacia fuera al soltarse
 const PORTAZO_EMPUJE := 0.30  # segundos DE JUEGO empujando
 const PORTAZO_SUELTA := 0.18  # y cayendo sola
 const PORTAZO_LENTO := 0.12   # a cuanto baja la velocidad del piche al pegar
@@ -117,7 +113,6 @@ const CINE_ALTO := 1.4
 # llega el aviso de contacto el rebote ya esta calculado, asi que hay que
 # devolverle el rumbo o se queda dentro por mucho que se abra el hueco.
 const PORTAZO_FRENA := 0.85
-const MURO := 0.30            # grosor de los muros de la jaula
 const VISTA_PANTALLA := 0.14    # subelo y el piche se ve mas grande
 # ...pero con un tope en metros. El tamano constante en pantalla se invento
 # cuando la camara se iba a 14 m; ahora que no pasa de 5.5, y que hay una jaula
@@ -146,9 +141,7 @@ var _caja_bola := AABB()
 var stamina := STAMINA_MAX
 var _ancla := Vector3.ZERO               # centro del circulo en el que se anda
 var _limite: MeshInstance3D
-var _jaula: Node3D
-var _puerta: MeshInstance3D
-var _bisagra: Node3D          # de ella cuelga la puerta desde el principio
+var _jaula: Node3D            # escenas/Jaula.tscn
 var _intro := false           # lo enciende _montar_intro y lo apaga la G
 var _camioneta: Node3D
 var _t_intro := 0.0
@@ -163,9 +156,6 @@ var _polvo: CPUParticles3D
 var _empujando := false       # el piche esta abriendo la puerta a empujones
 var _portazo := 1.0           # que fraccion de su velocidad lleva mientras
 var _vel_portazo := Vector3.ZERO   # el disparo entero, congelado en el impacto
-var _caja_cuerpo := AABB()    # el cuerpo en sus ejes; se mide antes de colgar
-var _caja_puerta := AABB()    # la puerta en ejes de la jaula; no cambia nunca
-var _tapa: StaticBody3D
 var _pulso_salto := false     # para detectar el flanco del espacio
 var _saltando := false        # brinco en curso: sin correa y sin soltar el mando
 var _angulo_rueda := 0.0                 # cuanto lleva rodado
@@ -369,7 +359,7 @@ func _montar_jaula() -> void:
 	golpe.fin_cine()
 	if is_instance_valid(_camioneta):
 		_camioneta.queue_free()   # la del hoyo 1 ya cumplio
-	_jaula = (load(JAULA_CUERPO) as PackedScene).instantiate()
+	_jaula = (load(JAULA) as PackedScene).instantiate()
 	add_child(_jaula)
 	var t := campo.pos_tee()
 	var b := campo.pos_bandera()
@@ -377,131 +367,12 @@ func _montar_jaula() -> void:
 	# la cara de la puerta es el +X del modelo: se gira para que apunte al hoyo
 	_jaula.rotation.y = atan2(-(b.z - t.z), b.x - t.x)
 
-	# la caja del cuerpo se mide AHORA, con una sola malla en el arbol: en
-	# cuanto cuelga la puerta ya hay dos y "la unica malla" deja de existir
-	_caja_cuerpo = _caja_de(_jaula)
-	_colgar_puerta()
+	_jaula.vigilar(bola)
+	_jaula.reventada.connect(_reventar_puerta)
+	# sus cuerpos fuera de los rayos de altura: si no, el rayo del tee da en el
+	# techo de la jaula y la bola se coloca dos metros mas arriba
 	campo.excluir = [bola.get_rid()]
-	_murar()
-	_tapar_puerta()
-	for sb in _jaula.find_children("*", "StaticBody3D", true, false):
-		campo.excluir.append((sb as StaticBody3D).get_rid())
-
-
-## Caja de la unica malla de un glb, en coordenadas de su raiz. Una sola
-## composicion: Transform3D * AABB REALINEA la caja con los ejes, asi que
-## encadenarlas la infla. Yendo a mundo y volviendo, con la jaula girada hacia
-## la bandera, salia una jaula de 3.13 m en vez de 2 y una puerta de 63 cm de
-## grosor en vez de 12: los muros quedaban lejos y el hueco era un porton.
-func _caja_de(raiz: Node3D) -> AABB:
-	var m := _malla_de(raiz)
-	return m.transform * m.mesh.get_aabb()
-
-
-func _malla_de(raiz: Node3D) -> MeshInstance3D:
-	var mallas := raiz.find_children("*", "MeshInstance3D", true, false)
-	assert(mallas.size() == 1, "el glb %s no trae una sola malla" % raiz.name)
-	return mallas[0] as MeshInstance3D
-
-
-## Cuelga la puerta de una bisagra puesta en su canto de abajo. Va montada asi
-## desde el principio, no al romperse: tirarla es solo mover la bisagra, y como
-## cuelga de la jaula todo se hace en ejes locales -la puerta mira al +X- sin
-## depender de hacia donde este girada la jaula.
-func _colgar_puerta() -> void:
-	var esc := (load(JAULA_PUERTA) as PackedScene).instantiate()
-	_puerta = _malla_de(esc)
-	_caja_puerta = _caja_de(esc)
-	_bisagra = Node3D.new()
-	_bisagra.position = Vector3(_caja_puerta.get_center().x, _caja_puerta.position.y,
-		_caja_puerta.get_center().z)
-	_jaula.add_child(_bisagra)
-	_bisagra.add_child(esc)
-	esc.position = -_bisagra.position   # la puerta vuelve a donde la dejo Blender
-
-
-## La colision de la jaula NO es su malla. Los barrotes tienen hueco entre ellos
-## y una bola de 4 cm se cuela por cualquiera: con trimesh la jaula era un
-## colador, y habia que atar la bola aparte con un circulo que ademas
-## desaparecia al romper la puerta. Aqui se levantan muros macizos por fuera de
-## cada cara, recortando SOLO el hueco de la puerta. La unica salida es la
-## puerta, con la jaula entera o con ella ya tirada.
-func _murar() -> void:
-	var j := _caja_cuerpo
-	var d := _caja_puerta
-	var x0 := j.position.x
-	var x1 := j.position.x + j.size.x
-	var z0 := j.position.z
-	var z1 := j.position.z + j.size.z
-	var alto := j.size.y
-	# bajan medio metro bajo el suelo: en cuesta, si no, queda una rendija
-	var h := alto + 0.5
-	var y := (alto - 0.5) * 0.5
-	_muro(Vector3(MURO, h, j.size.z), Vector3(x0 - MURO * 0.5, y, j.get_center().z))
-	_muro(Vector3(j.size.x, h, MURO), Vector3(j.get_center().x, y, z0 - MURO * 0.5))
-	_muro(Vector3(j.size.x, h, MURO), Vector3(j.get_center().x, y, z1 + MURO * 0.5))
-	# techo: sin el, un brinco de 1.56 m casi despeja el 1.65 de la jaula
-	_muro(Vector3(j.size.x, MURO, j.size.z),
-		Vector3(j.get_center().x, alto + MURO * 0.5, j.get_center().z))
-	# la cara +X es la de la puerta: dos jambas y un dintel, con el hueco libre
-	var hz0 := d.position.z
-	var hz1 := d.position.z + d.size.z
-	var dintel := d.position.y + d.size.y
-	_muro(Vector3(MURO, h, hz0 - z0), Vector3(x1 + MURO * 0.5, y, (z0 + hz0) * 0.5))
-	_muro(Vector3(MURO, h, z1 - hz1), Vector3(x1 + MURO * 0.5, y, (hz1 + z1) * 0.5))
-	_muro(Vector3(MURO, alto - dintel, hz1 - hz0),
-		Vector3(x1 + MURO * 0.5, (dintel + alto) * 0.5, (hz0 + hz1) * 0.5))
-
-
-func _muro(medidas: Vector3, donde: Vector3) -> void:
-	var forma := BoxShape3D.new()
-	forma.size = medidas
-	var cs := CollisionShape3D.new()
-	cs.shape = forma
-	var cuerpo := StaticBody3D.new()
-	cuerpo.add_child(cs)
-	_jaula.add_child(cuerpo)
-	cuerpo.position = donde
-
-
-## Lo que cierra el hueco mientras la puerta aguante: el panel arranca a 19 cm
-## del suelo y la bola se colaba por debajo, asi que su caja baja hasta el piso.
-func _tapar_puerta() -> void:
-	var c := _caja_puerta
-	var alto := c.position.y + c.size.y
-	var forma := BoxShape3D.new()
-	forma.size = Vector3(c.size.x, alto, c.size.z)
-	var cs := CollisionShape3D.new()
-	cs.shape = forma
-	_tapa = StaticBody3D.new()
-	_tapa.add_child(cs)
-	_jaula.add_child(_tapa)
-	_tapa.position = Vector3(c.get_center().x, alto * 0.5, c.get_center().z)
-
-
-## El impulso tira la puerta: se le cuelga una bisagra en el canto de abajo y
-## cae hacia fuera. Su colision se va con ella, que es lo que abre el hueco.
-func _tirar_puerta() -> void:
-	if not is_instance_valid(_puerta):
-		return
-	# Todo en ejes de la JAULA: la puerta mira al +X, asi que sale hacia alli y
-	# gira sobre el eje horizontal perpendicular. Antes habia que sacar el eje
-	# de la base de mundo y colgar la bisagra de un padre sin girar; con la
-	# puerta en su propio glb, ya montada bajo la jaula, no hace falta.
-	var eje := Vector3.UP.cross(Vector3.RIGHT)
-	var tw := create_tween().set_parallel()
-	# 1) cede a ritmo constante: la esta empujando algo, no cayendose sola
-	tw.tween_property(_bisagra, "quaternion", Quaternion(eje, deg_to_rad(PUERTA_ABRE)),
-		PORTAZO_EMPUJE).set_trans(Tween.TRANS_LINEAR)
-	# 2) ya suelta: termina de caer acelerando y sale despedida
-	tw.tween_property(_bisagra, "quaternion", Quaternion(eje, deg_to_rad(PUERTA_CAE)),
-		PORTAZO_SUELTA).set_delay(PORTAZO_EMPUJE) \
-		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-	tw.tween_property(_bisagra, "position",
-		_bisagra.position + Vector3.RIGHT * PUERTA_VUELA, PORTAZO_SUELTA) \
-		.set_delay(PORTAZO_EMPUJE).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-	Util.reventar(self, _bisagra.global_position, Color(0.62, 0.56, 0.48), 16)
-	_puerta = null
+	campo.excluir.append_array(_jaula.cuerpos())
 
 
 func _crear_limite() -> void:
@@ -610,6 +481,8 @@ func _crear_ui() -> void:
 func _ir_a_hoyo(i: int) -> void:
 	_marcas.clear()
 	campo.ir_a(i)
+	for g in campo.pateadores:
+		g.pateado.connect(_on_pateado)
 	golpe.reset(campo.pos_tee(), campo.pos_bandera())
 	golpe.viento = campo.viento()
 	stamina = STAMINA_MAX
@@ -650,6 +523,24 @@ func _drop() -> void:
 	golpes += PENA_DROP
 	_poner_bola(bola.global_position + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2)))
 	_aviso("Drop  +%d" % PENA_DROP, 1.0)
+
+
+## Un pateador lo mando volando. Es gratis: ni cuesta golpe ni gasta stamina,
+## que es lo que los hace valer la pena buscarlos en vez de esquivarlos.
+func _on_pateado(velocidad: Vector3) -> void:
+	if embocada or _intro or not listo:
+		return
+	_desde = bola.global_position
+	_aire = AIRE_TIEMPO
+	_giro = 0.0
+	_t_lento = 0.0
+	_t_caida = 0.0
+	_golpe_volo = false
+	_saltando = false
+	quieto = false
+	bola.freeze = false
+	bola.linear_velocity = velocidad
+	_aviso("Patada!", 0.9)
 
 
 func _on_golpeado(velocidad: Vector3) -> void:
@@ -785,10 +676,6 @@ func _physics_process(dt: float) -> void:
 		vel = bola.linear_velocity
 	_en_aire = volando
 
-	# Solo por aqui, que es el camino del impulso: andando o brincando la bola
-	# sigue "quieta", asi que empujar la puerta o subirse encima no la tira.
-	_chocar_puerta()
-
 	# mientras abre la puerta la velocidad la pone el guion, no la fisica: es el
 	# mismo disparo a camara lenta, asi que al soltarse sigue como si nada
 	if _empujando:
@@ -832,8 +719,8 @@ func _physics_process(dt: float) -> void:
 			if _enjaulado():
 				# por si el impulso no llego a tocarla: siempre la tira, o el
 				# jugador se quedaria encerrado gastando golpes
-				_tirar_puerta()
-				_abrir_puerta()
+				_jaula.tirar_puerta(PORTAZO_EMPUJE, PORTAZO_SUELTA)
+				_jaula.abrir()
 			_anclar()
 			_aviso("%d m" % roundi(_ultimo), 1.6)
 	else:
@@ -878,8 +765,7 @@ func _montar_intro() -> void:
 	if disco:
 		disco.queue_free()      # el disco de exhibicion de Sketchfab
 
-	for sb in _jaula.find_children("*", "StaticBody3D", true, false):
-		(sb as StaticBody3D).collision_layer = 0
+	_jaula.colision(false)
 	_jaula.get_parent().remove_child(_jaula)
 	_camioneta.add_child(_jaula)
 	_jaula.position = INTRO_JAULA_POS
@@ -1000,7 +886,7 @@ func _arrancar() -> void:
 	quieto = false
 	bola.freeze = false
 	bola.linear_velocity = salida
-	_reventar_puerta()
+	_reventar_puerta(fuera)
 
 
 ## Por donde puede circular sin tropezarse: prueba rumbos alrededor del tee y
@@ -1109,54 +995,10 @@ func _saltar() -> void:
 	bola.linear_velocity += Vector3.UP * IMPULSO_SALTO
 
 
-## Abre el hueco de verdad. Va aparte de tirar la puerta a proposito: la puerta
-## se cae en cuanto la bola le pega, para que se vea, pero el hueco no se abre
-## hasta que la bola para. Si se abriera al momento, la misma bola que acaba de
-## romperla saldria disparada por el hueco en el mismo impulso, y la idea es que
-## el primero rompa y rebote dentro, y el siguiente ya salga.
-func _abrir_puerta() -> void:
-	if not is_instance_valid(_tapa):
-		return
-	campo.excluir.erase(_tapa.get_rid())
-	# la capa a cero deja de estorbar en ESTE tick; queue_free no borra el
-	# cuerpo hasta el final del frame y la bola aun chocaria con el
-	_tapa.collision_layer = 0
-	_tapa.queue_free()
-	_tapa = null
-
-
-## La puerta se cae cuando la bola VA a pegarle, y solo por el camino del
-## impulso: andando o brincando la bola sigue "quieta" y no pasa por aqui.
-##
-## Se mira la geometria y no get_colliding_bodies(): a 26 m/s la colision la
-## resuelve el CCD y el monitor de contactos no la reportaba, asi que la puerta
-## no caia hasta que la bola se paraba. El margen es generoso a proposito: un
-## fotograma a esa velocidad son 43 cm, y hay que cazarla igual.
-func _chocar_puerta() -> void:
-	if not (is_instance_valid(_tapa) and is_instance_valid(_puerta)):
-		return
-	var fuera := _jaula.global_basis.x
-	fuera.y = 0.0
-	if bola.linear_velocity.dot(fuera.normalized()) <= 0.0:
-		return                      # va hacia dentro: no es un portazo
-	var caja := _caja_puerta
-	var p: Vector3 = _jaula.global_transform.affine_inverse() * bola.global_position
-	if p.x < caja.position.x - 0.35:
-		return                      # todavia lejos
-	if absf(p.z - caja.get_center().z) > caja.size.z * 0.5:
-		return                      # va a dar en una jamba, no en la puerta
-	if p.y > caja.position.y + caja.size.y:
-		return                      # va a dar en el dintel
-	_reventar_puerta()
-
-
 ## El portazo: la puerta vuela, el hueco queda libre y la bola LO ATRAVIESA.
 ## El rebote contra la puerta ya venia calculado en la velocidad, asi que se le
 ## devuelve el rumbo hacia fuera; si no, se quedaba dentro dando tumbos.
-func _reventar_puerta() -> void:
-	var fuera := _jaula.global_basis.x
-	fuera.y = 0.0
-	fuera = fuera.normalized()
+func _reventar_puerta(fuera: Vector3) -> void:
 	var v := bola.linear_velocity
 	# se guarda el disparo ENTERO, vertical incluida: durante el empujon la
 	# velocidad la manda el guion, y al soltarse se recupera tal cual. Forzando
@@ -1171,8 +1013,8 @@ func _reventar_puerta() -> void:
 	tw.tween_property(self, "_portazo", 1.0, PORTAZO_SUELTA) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tw.tween_callback(func(): _empujando = false)
-	_tirar_puerta()
-	_abrir_puerta()
+	_jaula.tirar_puerta(PORTAZO_EMPUJE, PORTAZO_SUELTA)
+	_jaula.abrir()
 	_cine_portazo()
 
 
@@ -1202,7 +1044,7 @@ func _aterrizar() -> void:
 
 ## La puerta sigue en pie: la salida esta tapada.
 func _enjaulado() -> bool:
-	return is_instance_valid(_tapa)
+	return is_instance_valid(_jaula) and _jaula.cerrada()
 
 
 ## Otra pregunta distinta de _enjaulado(): esa mira si la puerta sigue puesta,
@@ -1287,11 +1129,11 @@ func _probar_jaula() -> void:
 
 	# 1. contra la puerta no se sale, y ANDANDO no se cae: solo la tira el impulso
 	var p := await _empujar(a_puerta)
-	var tope_puerta := _caja_puerta.position.x
+	var tope_puerta: float = _jaula.frente()
 	print("jaula: contra la puerta, la bola queda en x=%.2f (puerta en %.2f)"
 		% [p.x, tope_puerta])
 	assert(p.x < tope_puerta, "la puerta no para a la bola andando")
-	assert(is_instance_valid(_puerta), "andar contra la puerta la tira")
+	assert(_jaula.puerta_entera(), "andar contra la puerta la tira")
 
 	# 2. y por los barrotes tampoco, que era el colador de la malla
 	var b := await _empujar(a_barrotes)
@@ -1309,11 +1151,11 @@ func _probar_jaula() -> void:
 	print("jaula: brincando sube hasta y=%.2f" % cima)
 	assert(cima > 0.5, "el brinco no despega dentro de la jaula")
 	assert(cima < 1.65, "el brinco se sale por el techo")
-	assert(is_instance_valid(_puerta), "brincar tira la puerta")
+	assert(_jaula.puerta_entera(), "brincar tira la puerta")
 
 	# 4. con la puerta tirada se sale, pero SOLO por el hueco
-	_tirar_puerta()
-	_abrir_puerta()                 # como al pararse tras el primer impulso
+	_jaula.tirar_puerta(PORTAZO_EMPUJE, PORTAZO_SUELTA)
+	_jaula.abrir()                  # como al pararse tras el primer impulso
 	_poner_bola(campo.pos_tee())
 	var f := await _empujar(a_puerta)
 	print("jaula: con la puerta tirada, sale a x=%.2f" % f.x)
@@ -1388,7 +1230,7 @@ func _self_check() -> void:
 	_angulo_rueda = 0.0
 	assert(campo.basura.size() > 0, "el hoyo se quedo sin basura que recoger")
 	# la jaula: la bola arranca dentro y la puerta mira a la bandera
-	assert(is_instance_valid(_jaula) and is_instance_valid(_puerta), "no hay jaula")
+	assert(is_instance_valid(_jaula) and _jaula.puerta_entera(), "no hay jaula")
 	var dentro := bola.global_position - _jaula.global_position
 	assert(absf(dentro.x) < 1.0 and absf(dentro.z) < 1.0, "la bola no arranca dentro")
 	var al_hoyo := campo.pos_bandera() - campo.pos_tee()
@@ -1457,6 +1299,6 @@ func _self_check() -> void:
 			await get_tree().physics_frame
 		var d := bola.global_position.distance_to(_jaula.global_position)
 		print("primer impulso: puerta abajo y la bola sale a %.2f m de la jaula" % d)
-		assert(_puerta == null, "el primer impulso no tiro la puerta")
-		assert(_tapa == null, "el hueco no quedo abierto")
+		assert(not _jaula.puerta_entera(), "el primer impulso no tiro la puerta")
+		assert(not _jaula.cerrada(), "el hueco no quedo abierto")
 		assert(d > 2.0, "el impulso revento la puerta pero no atraveso el hueco")

@@ -1,0 +1,90 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="Script" path="res://scripts/jaula.gd" id="1_jaula"]
+[ext_resource type="PackedScene" path="res://modelos/PGJ_JaulaBODY.glb" id="2_cuerpo"]
+[ext_resource type="PackedScene" path="res://modelos/PGJ_JaulaDOOR.glb" id="3_puerta"]
+
+[sub_resource type="BoxShape3D" id="B_izq"]
+size = Vector3(0.3, 2.1498, 2)
+
+[sub_resource type="BoxShape3D" id="B_fondo"]
+size = Vector3(2, 2.1498, 0.3)
+
+[sub_resource type="BoxShape3D" id="B_frente"]
+size = Vector3(2, 2.1498, 0.3)
+
+[sub_resource type="BoxShape3D" id="B_techo"]
+size = Vector3(2, 0.3, 2)
+
+[sub_resource type="BoxShape3D" id="B_jambaA"]
+size = Vector3(0.3, 2.1498, 0.5518)
+
+[sub_resource type="BoxShape3D" id="B_jambaB"]
+size = Vector3(0.3, 2.1498, 0.5518)
+
+[sub_resource type="BoxShape3D" id="B_dintel"]
+size = Vector3(0.3, 0.1956, 0.8963)
+
+[sub_resource type="BoxShape3D" id="B_tapa"]
+size = Vector3(0.1224, 1.4542, 0.8963)
+
+[node name="Jaula" type="Node3D"]
+script = ExtResource("1_jaula")
+
+[node name="Cuerpo" parent="." instance=ExtResource("2_cuerpo")]
+
+[node name="Bisagra" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.891753, 0.191263, 0)
+
+[node name="Puerta" parent="Bisagra" instance=ExtResource("3_puerta")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.891753, -0.191263, 0)
+
+[node name="Muros" type="Node3D" parent="."]
+
+[node name="Izq" type="StaticBody3D" parent="Muros"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.15, 0.5749, 0)
+
+[node name="Forma" type="CollisionShape3D" parent="Muros/Izq"]
+shape = SubResource("B_izq")
+
+[node name="Fondo" type="StaticBody3D" parent="Muros"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5749, -1.15)
+
+[node name="Forma" type="CollisionShape3D" parent="Muros/Fondo"]
+shape = SubResource("B_fondo")
+
+[node name="Frente" type="StaticBody3D" parent="Muros"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5749, 1.15)
+
+[node name="Forma" type="CollisionShape3D" parent="Muros/Frente"]
+shape = SubResource("B_frente")
+
+[node name="Techo" type="StaticBody3D" parent="Muros"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.7998, 0)
+
+[node name="Forma" type="CollisionShape3D" parent="Muros/Techo"]
+shape = SubResource("B_techo")
+
+[node name="JambaA" type="StaticBody3D" parent="Muros"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.15, 0.5749, -0.7241)
+
+[node name="Forma" type="CollisionShape3D" parent="Muros/JambaA"]
+shape = SubResource("B_jambaA")
+
+[node name="JambaB" type="StaticBody3D" parent="Muros"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.15, 0.5749, 0.7241)
+
+[node name="Forma" type="CollisionShape3D" parent="Muros/JambaB"]
+shape = SubResource("B_jambaB")
+
+[node name="Dintel" type="StaticBody3D" parent="Muros"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.15, 1.552, 0)
+
+[node name="Forma" type="CollisionShape3D" parent="Muros/Dintel"]
+shape = SubResource("B_dintel")
+
+[node name="Tapa" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.891753, 0.727118, 0)
+
+[node name="Forma" type="CollisionShape3D" parent="Tapa"]
+shape = SubResource("B_tapa")

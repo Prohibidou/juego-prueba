@@ -17,6 +17,10 @@ const ESCALA := 1.0 / 0.0018   # deshace la escala que mete Sketchfab
 # La basura viene como un escaparate de Sketchfab: cuarenta y pico piezas
 # sueltas (latas, cajas, ladrillos) repartidas sobre un plano. Se usan de
 # molde, se duplican y se siembran por el pasillo del hoyo.
+# Gente plantada por el campo que patea al piche y lo manda volando. Es una
+# escena aparte y se vale sola: se la siembra y se escucha su senal.
+const PATEADOR := "res://escenas/Pateador.tscn"
+const PATEADORES := 5          # por hoyo
 const BASURA := "res://modelos/trash_and_debris.glb"
 const BASURAS := 16            # piezas por hoyo
 
@@ -63,6 +67,7 @@ var _bandera := Vector3.ZERO
 var _labio := 0.0
 var animales: Array = []
 var basura: Array = []
+var pateadores: Array = []
 
 var _moldes: Array[MeshInstance3D] = []
 
@@ -128,12 +133,13 @@ func ir_a(i: int) -> void:
 	var h: Dictionary = HOYOS[i]
 	var t: Vector2 = h["tee"]
 	var b: Vector2 = h["bandera"]
-	_tee = Vector3(t.x, altura_terreno(t.x, t.y), t.y)
-	_bandera = Vector3(b.x, altura_terreno(b.x, b.y), b.y)
+	_tee = Vector3(t.x, altura_suelo(t.x, t.y), t.y)
+	_bandera = Vector3(b.x, altura_suelo(b.x, b.y), b.y)
 	_labio = _bandera.y + ALTO_PLATAFORMA
 	_montar_copa()
 	_poblar_fauna()
 	_poblar_basura()
+	_poblar_gente()
 
 
 ## `techo` es desde donde cae el rayo. Por defecto desde muy arriba, que es lo
@@ -141,13 +147,38 @@ func ir_a(i: int) -> void:
 ## colision, y bajo un arbol esa es la copa, no el suelo. Quien ya sabe mas o
 ## menos a que altura esta lo que busca puede bajar el techo y saltarselas.
 func altura_terreno(x: float, z: float, techo := TECHO) -> float:
+	var h := _rayo(x, z, techo)
+	return _bandera.y if is_inf(h) else h
+
+
+## Rayo hacia abajo, en crudo. Devuelve INF si no encuentra NADA, que no es lo
+## mismo que encontrar suelo a la altura cero: altura_suelo necesita saber la
+## diferencia para no seguir pelando capas cuando ya no queda nada debajo.
+func _rayo(x: float, z: float, desde: float) -> float:
 	var esp := get_world_3d().direct_space_state
 	if esp == null:
-		return 0.0
-	var q := PhysicsRayQueryParameters3D.create(Vector3(x, techo, z), Vector3(x, SUELO, z))
+		return INF
+	var q := PhysicsRayQueryParameters3D.create(Vector3(x, desde, z), Vector3(x, SUELO, z))
 	q.exclude = excluir
 	var golpe := esp.intersect_ray(q)
-	return golpe["position"].y if golpe else _bandera.y
+	return golpe["position"].y if golpe else INF
+
+
+## El SUELO, no lo primero que encuentre el rayo. altura_terreno para en la
+## primera colision, y bajo un arbol esa es la copa: por eso la fauna, la
+## basura y la gente aparecian plantadas quince metros en el aire. Se vuelve a
+## tirar desde justo debajo de lo que encontro, y asi se van pelando capas
+## hasta que una tirada ya no baja: eso es el suelo.
+func altura_suelo(x: float, z: float) -> float:
+	var h := _rayo(x, z, TECHO)
+	if is_inf(h):
+		return _bandera.y
+	for i in 4:
+		var abajo := _rayo(x, z, h - 0.3)
+		if is_inf(abajo) or abajo >= h - 0.05:
+			break                      # ya no queda nada debajo: eso es suelo
+		h = abajo
+	return h
 
 
 func embocada(pos: Vector3) -> bool:
@@ -301,7 +332,7 @@ func _poblar_fauna() -> void:
 		cabeza.material_override = Util.mat(col.lightened(0.1))
 		cabeza.position = Vector3(0, 0.48, -0.3)
 		nodo.add_child(cabeza)
-		nodo.position = Vector3(p.x, altura_terreno(p.x, p.y), p.y)
+		nodo.position = Vector3(p.x, altura_suelo(p.x, p.y), p.y)
 		add_child(nodo)
 		animales.append({"nodo": nodo, "dir": randf() * TAU, "t": randf() * 3.0,
 			"vivo": true, "color": col})
@@ -327,10 +358,30 @@ func _poblar_basura() -> void:
 		malla.position = -caja.get_center()   # el molde viene donde lo dejo el escaparate
 		var pieza := Node3D.new()
 		pieza.add_child(malla)
-		pieza.position = Vector3(p.x, altura_terreno(p.x, p.y) + caja.size.y * 0.5, p.y)
+		pieza.position = Vector3(p.x, altura_suelo(p.x, p.y) + caja.size.y * 0.5, p.y)
 		pieza.rotation.y = randf() * TAU
 		add_child(pieza)
 		basura.append(pieza)
+
+
+## Siembra pateadores por el pasillo del hoyo, mirando a la bandera: el piche
+## sale en la direccion en la que miran, asi que se los planta de cara al hoyo.
+func _poblar_gente() -> void:
+	for g in pateadores:
+		if is_instance_valid(g):
+			g.queue_free()
+	pateadores.clear()
+	var a := Vector2(_tee.x, _tee.z)
+	var b := Vector2(_bandera.x, _bandera.z)
+	for i in PATEADORES:
+		var p := a.lerp(b, randf_range(0.15, 0.85)) \
+			+ Vector2.from_angle(randf() * TAU) * randf_range(4.0, ANCHO_CALLE)
+		var g: Node3D = (load(PATEADOR) as PackedScene).instantiate()
+		g.position = Vector3(p.x, altura_suelo(p.x, p.y), p.y)
+		var d := b - p
+		g.rotation.y = atan2(-d.y, d.x)   # su +X, por donde patea, al hoyo
+		add_child(g)
+		pateadores.append(g)
 
 
 ## Recoge lo que haya a tiro y devuelve cuantas piezas eran.
