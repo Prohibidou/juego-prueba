@@ -75,6 +75,7 @@ var _limite: MeshInstance3D
 var _angulo_rueda := 0.0                 # cuanto lleva rodado
 var _eje_rueda := Vector3.RIGHT          # el eje del disco: su cara plana
 var _dir_rueda := Vector3.FORWARD
+var _mira_rueda := 0.0                   # ultima mira vista, para girar en el sitio con A/D
 var _aire := 0.0          # timon que le queda a este golpe
 var _marcas: Array = []
 
@@ -200,6 +201,20 @@ func _rodar(e: float, dt: float) -> Basis:
 		var radio := _diam_bola * e * 0.5
 		if dt > 0.0 and radio > 0.0:
 			_angulo_rueda += minf(plana.length() / radio, GIRO_MAX) * dt
+	elif dt > 0.0 and golpe.activo:
+		# quieto o girando en el sitio: A/D solo cambia la mira (golpe.gd), no
+		# empuja, asi que aqui no hay avance del que sacar rumbo. Sin esto el
+		# piche se quedaba mirando para el ultimo lado que rodo, y A/D no se
+		# notaba en el modelo, solo en la camara. Se sigue la mira y se gira
+		# sobre el propio eje lo mismo que giro ella, como si pivotara.
+		# Solo con activo=true (el jugador manda): si no, un golpe real que
+		# frena por debajo de 0.05 antes de quedar "quieto" haria que el
+		# piche pegara un giro brusco hacia la mira vieja del ultimo apunte.
+		var d_mira := wrapf(golpe.mira - _mira_rueda, -PI, PI)
+		_mira_rueda = golpe.mira
+		_dir_rueda = Vector3(sin(golpe.mira), 0, cos(golpe.mira))
+		_eje_rueda = Vector3.UP.cross(_dir_rueda)
+		_angulo_rueda += absf(d_mira)
 	return Basis(_eje_rueda, _angulo_rueda) \
 		* Basis(_eje_rueda, Vector3.UP, _dir_rueda)
 
@@ -337,6 +352,7 @@ func _poner_bola(donde: Vector3) -> void:
 	estela.emitting = false
 	_t_lento = 0.0
 	_t_caida = 0.0
+	_mira_rueda = golpe.mira  # que no arranque girando por la diferencia con la mira anterior
 	_aplicar_damp()
 	_anclar()
 
@@ -516,6 +532,14 @@ func _physics_process(dt: float) -> void:
 func _conducir() -> void:
 	var dir: Vector3 = golpe.mando()
 	if dir == Vector3.ZERO:
+		# sin mando no se mueve nada. Si quedo descongelada de un empujon
+		# anterior, aqui mismo se frena y se congela: si no, quedaba como
+		# cuerpo rigido libre y la gravedad/la pendiente la seguian moviendo
+		# solas hasta el proximo empujon. Que la mueva solo el jugador.
+		if not bola.freeze:
+			bola.linear_velocity = Vector3.ZERO
+			bola.angular_velocity = Vector3.ZERO
+			bola.freeze = true
 		return
 	if Vector3(bola.linear_velocity.x, 0, bola.linear_velocity.z).length() > CONDUCE_MAX:
 		return
@@ -526,6 +550,13 @@ func _conducir() -> void:
 	if fuera.length() >= RADIO_ANDAR and Vector2(dir.x, dir.z).dot(fuera.normalized()) > 0.0:
 		return
 	bola.freeze = false      # congelada no admite fuerzas
+	# que una pendiente no desvie el rumbo: se descarta la parte de la
+	# velocidad que no va en la linea de "dir" (adelante/atras), que es lo
+	# unico que el jugador esta pidiendo. Sin esto, en una bajada la
+	# gravedad la iba corriendo de costado aunque se empujara derecho.
+	var recta := dir.normalized()
+	var horizontal := Vector3(bola.linear_velocity.x, 0, bola.linear_velocity.z)
+	bola.linear_velocity = recta * horizontal.dot(recta) + Vector3.UP * bola.linear_velocity.y
 	bola.apply_central_force(dir * CONDUCE_ACEL * Util.MASA)
 
 

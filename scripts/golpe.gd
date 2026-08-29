@@ -1,6 +1,12 @@
 extends Node3D
 ## Apuntado, potencia, mando y camara. No conoce las reglas: cuando el jugador
 ## suelta, emite la velocidad de salida; el stick izquierdo lo lee juego.gd.
+##
+## El mando es de tanque, no de camara libre: A/D (o el eje X del stick
+## izquierdo) SOLO giran la mira, W/S (o el eje Y) SOLO empujan adelante o
+## atras en esa direccion. Como la mira es tambien el rumbo que sigue la
+## camara, moverse en linea recta nunca cambia el angulo de camara -solo
+## girar lo hace- y la direccion de avance no la puede desviar una pendiente.
 
 signal golpeado(velocidad: Vector3)
 
@@ -30,27 +36,32 @@ const TIMON_VUELVE := 2.0   # el arrastre se suelta solo al soltar el dedo
 # --- camara ---
 # Pegada al piche: es un bicho pequeno, no una bola de golf, y de lejos se
 # perdia de vista aunque _escalar_vista lo agrande en pantalla.
-const CAM_ALTO_TIRO := 0.55
+const CAM_ALTO := 0.55         # fija: la misma altura siempre, quieta o en marcha
 const CAM_ATRAS_TIRO := 1.1
-# La camara se aleja y abre el angulo con la velocidad: encuadra igual un putt
-# que un piche fuerte, y el ensanchado del fov da la sensacion de velocidad.
+# La camara se aleja con la velocidad: encuadra igual un putt que un piche
+# fuerte, y el ensanchado del fov da la sensacion de velocidad.
 const CAM_ATRAS_MIN := 1.2
 const CAM_ATRAS_MAX := 3.2
-const CAM_ALTO_MIN := 0.45
-const CAM_ALTO_MAX := 1.2
 const CAM_FOV := 62.0
 const CAM_FOV_MAX := 74.0
 const CAM_VEL_REF := 24.0      # m/s a los que la camara esta del todo abierta: va con VEL_MAX
 const CAM_UMBRAL_QUIETO := 0.3 # m/s: por debajo, "quieto" para la camara (igual que QUIETA en juego.gd)
+# Rumbo con tope de giro: un tiron del stick puede cambiar la velocidad de la
+# bola de golpe (90 grados o mas), pero la camara y la mira no saltan con
+# ella, viran a este ritmo maximo. Sin esto, un cambio brusco de direccion
+# se notaba como un salto de camara en vez de un giro.
+const CAM_GIRO_MAX := 3.5      # rad/s
 const CAM_SUAVIZADO := 14.0
 const CAM_FOV_SUAVIZADO := 4.0 # el fov va mas lento que la posicion: asi se nota
 # --------------
 
 # --- mando ---
-# Stick izquierdo: rueda el piche. Stick derecho: apunta. El boton de golpe ya
-# funciona solo, porque "ui_accept" incluye la A del mando por defecto.
+# De tanque: A/D (izquierdo, eje X) giran; W/S (izquierdo, eje Y) avanzan. El
+# stick derecho tambien gira la mira, para apuntar sin moverse. El boton de
+# golpe ya funciona solo, porque "ui_accept" incluye la A del mando por defecto.
 const ZONA_MUERTA := 0.2
 const APUNTA_GIRO := 1.6       # rad/s de mira con el stick derecho al tope
+const GIRO_ANDAR := 2.2        # rad/s de mira con A/D o el stick izquierdo
 # -------------
 
 const LARGO_MIRA := 60.0    # metros de linea de apuntado
@@ -142,26 +153,20 @@ func _process(dt: float) -> void:
 		if Input.is_action_just_released("ui_accept"):
 			soltar()
 	elif activo:
-		var plana := Vector3(_bola.linear_velocity.x, 0, _bola.linear_velocity.z)
-		if plana.length() > CAM_UMBRAL_QUIETO:
-			# se esta llevando el piche con el stick: el tiro apunta para
-			# donde se lo lleva. Si no, la mira (y la linea que dibuja) se
-			# quedaba en el angulo viejo mientras la camara giraba detras
-			# siguiendo el movimiento, como si no se hubiera girado nada.
-			mira = atan2(plana.x, plana.z)
-		else:
-			# teclas crudas y no ui_*: esas acciones llevan dentro el stick
-			# izquierdo, que aqui rueda al piche. En mando se apunta con el derecho.
-			if Input.is_key_pressed(KEY_LEFT): mira += dt * 1.0
-			if Input.is_key_pressed(KEY_RIGHT): mira -= dt * 1.0
-			mira -= _stick(JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y).x * dt * APUNTA_GIRO
+		# de tanque: A/D (o el stick izquierdo, eje X) SOLO giran la mira,
+		# nunca desplazan -eso es cosa de W/S en mando()-. El stick derecho
+		# y las flechas tambien giran, para poder apuntar sin caminar.
+		if Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A): mira += dt * GIRO_ANDAR
+		if Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D): mira -= dt * GIRO_ANDAR
+		mira -= _stick(JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y).x * dt * GIRO_ANDAR
+		mira -= _stick(JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y).x * dt * APUNTA_GIRO
 
 	_timon_tactil = move_toward(_timon_tactil, 0.0, dt * TIMON_VUELVE)
 	timon = 0.0 if activo else clampf(
 		Input.get_axis("ui_left", "ui_right") + _timon_tactil, -1.0, 1.0)
 
-	_dibujar_mira()
 	_mover_camara(dt)
+	_dibujar_mira()
 
 
 ## Stick con zona muerta. ponytail: mando 0, el primero que haya conectado;
@@ -171,21 +176,19 @@ func _stick(eje_x: int, eje_y: int) -> Vector2:
 	return Vector2.ZERO if v.length() < ZONA_MUERTA else v.limit_length(1.0)
 
 
-## Hacia donde se empuja al bicho: stick izquierdo o WASD, lo que se toque.
-## Girado a la camara y aplanado. El largo del vector es cuanto se inclina.
+## Cuanto empuja adelante (o atras) el bicho: SOLO W/S, o el eje Y del stick
+## izquierdo. Girar es cosa de A/D en _process(), no de aca: mando() nunca
+## desplaza de costado, para que la mira sea el UNICO rumbo -si una pendiente
+## empuja de lado, juego.gd lo corrige, no hace falta que este vector lo haga.
 func mando() -> Vector3:
 	var v := _stick(JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y)
+	var empuje := -v.y
 	if v == Vector2.ZERO:
-		v = Vector2(
-			float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A)),
-			float(Input.is_key_pressed(KEY_S)) - float(Input.is_key_pressed(KEY_W))
-		).limit_length(1.0)
-	if v == Vector2.ZERO:
+		empuje = float(Input.is_key_pressed(KEY_W)) - float(Input.is_key_pressed(KEY_S))
+	empuje = clampf(empuje, -1.0, 1.0)
+	if is_zero_approx(empuje):
 		return Vector3.ZERO
-	var b := _camara.global_basis
-	var frente := Vector3(-b.z.x, 0.0, -b.z.z).normalized()
-	var lado := Vector3(b.x.x, 0.0, b.x.z).normalized()
-	return (lado * v.x - frente * v.y).limit_length(1.0)
+	return Vector3(sin(mira), 0, cos(mira)) * empuje
 
 
 func direccion() -> Vector3:
@@ -220,30 +223,34 @@ func _dibujar_mira() -> void:
 	im.surface_end()
 
 
-## "activo" tambien esta puesto mientras se lleva el piche a mano con el stick
-## (juego.gd lo deja en quieto=true todo ese rato): si ahi la camara siguiera
-## mirando para donde apunta la mira, empujar al piche hacia un lado no la
-## giraria y se veria andar de costado o de espaldas. Solo se cuenta como
-## "quieto de verdad" cuando ademas no se esta moviendo.
-func _quieto_de_verdad() -> bool:
-	var plana := Vector3(_bola.linear_velocity.x, 0, _bola.linear_velocity.z)
-	return activo and plana.length() <= CAM_UMBRAL_QUIETO
+## Gira `actual` hacia `objetivo` (vectores planos, XZ) como mucho `max_rad`
+## radianes por este paso. Es lo que evita que un cambio de rumbo brusco -al
+## aterrizar de un golpe fuerte- salte de un frame a otro.
+func _girar_hacia(actual: Vector3, objetivo: Vector3, max_rad: float) -> Vector3:
+	if max_rad <= 0.0:
+		return actual
+	var a0 := atan2(actual.x, actual.z)
+	var a1 := atan2(objetivo.x, objetivo.z)
+	var a := a0 + clampf(wrapf(a1 - a0, -PI, PI), -max_rad, max_rad)
+	return Vector3(sin(a), 0, cos(a))
 
 
-func objetivo_camara() -> Vector3:
-	if _quieto_de_verdad():
+## "activo" (juego.gd) esta puesto tanto apuntando quieto como llevando el
+## piche a mano con A/D/W/S: en los dos casos el rumbo lo decide el jugador
+## via mira, asi que la camara sigue la mira siempre igual, sin mirar la
+## velocidad -moverse en linea recta nunca le cambia el angulo-. Solo cuando
+## el piche vuela o rueda solo tras un golpe (activo=false, el jugador no
+## esta manejando la caida) la camara persigue el rumbo real de la bola.
+func objetivo_camara(dt := 0.0) -> Vector3:
+	if activo:
 		return _bola.global_position - Vector3(sin(mira), 0, cos(mira)) * CAM_ATRAS_TIRO \
-			+ Vector3.UP * CAM_ALTO_TIRO
-	# Detras de la bola, en su direccion de avance: da igual si vuela, rueda
-	# sola o la esta llevando el jugador con el stick, siempre gira para
-	# seguirla. La direccion se recuerda: al frenar del todo la velocidad
-	# tiembla y la camara daria bandazos.
+			+ Vector3.UP * CAM_ALTO
 	var plana := Vector3(_bola.linear_velocity.x, 0, _bola.linear_velocity.z)
 	if plana.length() > CAM_UMBRAL_QUIETO:
-		_dir_camara = plana.normalized()
+		_dir_camara = _girar_hacia(_dir_camara, plana.normalized(), CAM_GIRO_MAX * dt)
 	var t := _factor_velocidad()
 	return _bola.global_position - _dir_camara * lerpf(CAM_ATRAS_MIN, CAM_ATRAS_MAX, t) \
-		+ Vector3.UP * lerpf(CAM_ALTO_MIN, CAM_ALTO_MAX, t)
+		+ Vector3.UP * CAM_ALTO
 
 
 ## 0 con la bola parada, 1 a CAM_VEL_REF. Manda el encuadre y el fov.
@@ -257,11 +264,12 @@ func _paso(k: float, dt: float) -> float:
 	return 1.0 - exp(-k * dt)
 
 
-## Adelanta la mirada por la linea de tiro cuando esta quieta apuntando, pero
-## poco: con la camara pegada, mirar a 40 m dejaba al piche fuera de cuadro.
-## Moviendose -volando, rodando o llevada con el stick- se mira a ella misma.
+## Adelanta la mirada por la linea de tiro mientras el rumbo lo decide el
+## jugador (activo), pero poco: con la camara pegada, mirar a 40 m dejaba al
+## piche fuera de cuadro. Volando o rodando sola tras un golpe, se mira a
+## ella misma.
 func _mirada_deseada() -> Vector3:
-	if _quieto_de_verdad():
+	if activo:
 		var dir := Vector3(sin(mira), 0, cos(mira))
 		return _bola.global_position + dir * 5.0 + Vector3.UP * 0.5
 	return _bola.global_position
@@ -282,9 +290,8 @@ func _mover_camara(dt: float) -> void:
 	# entera al pasar a "quieto" (se notaba como un reset de camara). Asi
 	# ninguna de las dos pega saltos, sea cual sea el motivo del cambio.
 	var paso := _paso(CAM_SUAVIZADO, dt)
-	_camara.global_position = _camara.global_position.lerp(objetivo_camara(), paso)
+	_camara.global_position = _camara.global_position.lerp(objetivo_camara(dt), paso)
 	_mirada = _mirada.lerp(_mirada_deseada(), paso)
 	_camara.look_at(_mirada)
-	var quieto := _quieto_de_verdad()
-	var fov := CAM_FOV if quieto else lerpf(CAM_FOV, CAM_FOV_MAX, _factor_velocidad())
+	var fov := CAM_FOV if activo else lerpf(CAM_FOV, CAM_FOV_MAX, _factor_velocidad())
 	_camara.fov = lerpf(_camara.fov, fov, _paso(CAM_FOV_SUAVIZADO, dt))
