@@ -8,7 +8,15 @@ const QUIETA := 0.3
 # una bola rodando a QUIETA gira a QUIETA/RADIO rad/s: a escala real son 14
 # rad/s, no los 2 que valian cuando la bola medía 40 cm
 const QUIETA_GIRO := QUIETA / Util.RADIO * 2.0
-const ESPERA_QUIETA := 0.35
+const ESPERA_QUIETA := 0.2
+# Un piche cae con backspin y frena de golpe, no rueda como una bola de golf:
+# con el damp del cesped solo (calle 0.3) tardaba mas de 10 s en asentarse
+# despues de caer, y hasta que no estaba "quieto" no se recuperaba el control.
+const FRENO_ATERRIZAJE := 0.32   # fraccion de velocidad que le queda al tocar
+# Tope duro ademas del freno: con poco damp (calle) el resto de velocidad que
+# sobrevive al freno igual podia reptar mas de la cuenta. A partir de este
+# tiempo EN EL SUELO (no cuenta el vuelo) se corta y se da por quieta.
+const CAIDA_MAX := 0.5
 const VEL_MARCA := 15.0
 const PENA_ANIMAL := 2
 const PENA_DROP := 1
@@ -52,6 +60,8 @@ var embocada := false
 var quieto := true
 var listo := false
 var _t_lento := 0.0
+var _t_caida := 0.0       # cuanto lleva EN EL SUELO desde que aterrizo, para CAIDA_MAX
+var _golpe_volo := false  # si este golpe llego a volar (pos.y > umbral); ver CAIDA_MAX
 var _v_pendiente := Vector3.ZERO
 var _giro := 0.0
 var _en_aire := false
@@ -326,6 +336,7 @@ func _poner_bola(donde: Vector3) -> void:
 	_giro = 0.0
 	estela.emitting = false
 	_t_lento = 0.0
+	_t_caida = 0.0
 	_aplicar_damp()
 	_anclar()
 
@@ -350,6 +361,7 @@ func _on_golpeado(velocidad: Vector3) -> void:
 	_desde = bola.global_position
 	_aire = AIRE_TIEMPO
 	_v_pendiente = velocidad
+	_golpe_volo = false
 	# el angulo de salida ya es fijo, asi que el efecto sale casi constante; lo
 	# que si cambia es el rough, de donde la bola sale sin freno
 	var z := campo.zona(_desde.x, _desde.z)
@@ -440,11 +452,20 @@ func _physics_process(dt: float) -> void:
 
 	var suelo := campo.altura_terreno(pos.x, pos.z)
 	var volando := pos.y > suelo + Util.RADIO + 0.4
+	_golpe_volo = _golpe_volo or volando
 	var zona := campo.zona(pos.x, pos.z)
 	bola.linear_damp = 0.0 if volando else campo.damp_suelo() * campo.factor_damp(zona)
 	estela.emitting = volando and vel.length() > 20.0
-	if _en_aire and not volando and vel.length() > VEL_MARCA:
-		_marca(pos, vel.length())
+	if _en_aire and not volando:
+		if vel.length() > VEL_MARCA:
+			_marca(pos, vel.length())
+		# el toque de aterrizaje: como el piche cae con backspin, aqui pierde
+		# de golpe casi toda la velocidad en vez de seguir rodando largo. El
+		# giro tambien se corta, si no la friccion lo va reacelerando y el
+		# check de "quieto" (que mira angular_velocity) no llega a cumplirse.
+		bola.linear_velocity *= FRENO_ATERRIZAJE
+		bola.angular_velocity *= FRENO_ATERRIZAJE
+		vel = bola.linear_velocity
 	_en_aire = volando
 
 	_giro = maxf(0.0, _giro - dt / Util.VIDA_GIRO)
@@ -465,9 +486,20 @@ func _physics_process(dt: float) -> void:
 	# ponytail: el frenado es exponencial, asi que la cola es larga y la bola
 	# repta un rato. Si se nota flotante, cambiarlo por resistencia a la
 	# rodadura: fuerza constante en contra, no proporcional a la velocidad.
-	if not volando and vel.length() < QUIETA and bola.angular_velocity.length() < QUIETA_GIRO:
-		_t_lento += dt
-		if _t_lento >= ESPERA_QUIETA:
+	if not volando:
+		var casi_quieta := vel.length() < QUIETA and bola.angular_velocity.length() < QUIETA_GIRO
+		_t_lento = _t_lento + dt if casi_quieta else 0.0
+		# CAIDA_MAX solo corta el REBOTE despues de un golpe que voló: para un
+		# piche corto que nunca despega (un putt) no hay caida que cortar, y
+		# aplicarlo igual lo paraba en seco a mitad de rodada. Sin volar de
+		# por medio, se frena solo como siempre: gradual, con el damp del suelo.
+		var corte_por_tiempo := false
+		if _golpe_volo:
+			_t_caida += dt
+			corte_por_tiempo = _t_caida >= CAIDA_MAX
+		if _t_lento >= ESPERA_QUIETA or corte_por_tiempo:
+			bola.linear_velocity = Vector3.ZERO
+			bola.angular_velocity = Vector3.ZERO
 			bola.freeze = true
 			quieto = true
 			_ultimo = Vector2(pos.x - _desde.x, pos.z - _desde.z).length()
@@ -475,6 +507,7 @@ func _physics_process(dt: float) -> void:
 			_aviso("%d m" % roundi(_ultimo), 1.6)
 	else:
 		_t_lento = 0.0
+		_t_caida = 0.0
 
 
 ## El stick izquierdo rueda el piche mientras esta parado. En el aire ese mismo
