@@ -38,6 +38,10 @@ const TIMON_VUELVE := 2.0   # el arrastre se suelta solo al soltar el dedo
 # perdia de vista aunque _escalar_vista lo agrande en pantalla.
 const CAM_ALTO := 0.55         # fija: la misma altura siempre, quieta o en marcha
 const CAM_ATRAS_TIRO := 1.1
+# Dentro de la jaula esa camara cae entre los barrotes y no se ve nada: se sale
+# fuera para que se vea la jaula entera y por donde esta la puerta.
+const CAM_ALTO_JAULA := 2.4
+const CAM_ATRAS_JAULA := 4.6
 # La camara se aleja con la velocidad: encuadra igual un putt que un piche
 # fuerte, y el ensanchado del fov da la sensacion de velocidad.
 const CAM_ATRAS_MIN := 1.2
@@ -57,8 +61,9 @@ const CAM_FOV_SUAVIZADO := 4.0 # el fov va mas lento que la posicion: asi se not
 
 # --- mando ---
 # De tanque: A/D (izquierdo, eje X) giran; W/S (izquierdo, eje Y) avanzan. El
-# stick derecho tambien gira la mira, para apuntar sin moverse. El boton de
-# golpe ya funciona solo, porque "ui_accept" incluye la A del mando por defecto.
+# stick derecho tambien gira la mira, para apuntar sin moverse. El impulso es
+# G (o la A del mando); el salto va aparte, en juego.gd, con el espacio. No se
+# usa "ui_accept" porque lleva dentro el espacio, que ahora es saltar.
 const ZONA_MUERTA := 0.2
 const APUNTA_GIRO := 1.6       # rad/s de mira con el stick derecho al tope
 const GIRO_ANDAR := 2.2        # rad/s de mira con A/D o el stick izquierdo
@@ -73,6 +78,7 @@ var activo := false
 var viento := Vector3.ZERO
 var estabilidad := 1.0       # 1 en calle, menos en rough: alli se controla peor
 var tope := 1.0              # cuanta barra deja cargar la stamina; lo pone juego.gd
+var enjaulado := false       # la camara se aparta para que se vea la jaula
 var puede_saltar := true     # sin stamina no hay impulso; lo pone juego.gd
 var timon := 0.0             # -1..1 para dirigir en el aire; lo lee juego.gd
 var suelo: Callable          # (x, z) -> altura del terreno
@@ -146,11 +152,12 @@ func _process(dt: float) -> void:
 	if _bola == null:
 		return
 
-	if activo and Input.is_action_just_pressed("ui_accept"):
+	var pulsa := Input.is_key_pressed(KEY_G) or Input.is_joy_button_pressed(0, JOY_BUTTON_A)
+	if activo and pulsa and not _cargando:
 		cargar()
 	if _cargando:
 		fuerza = minf(tope, fuerza + dt * CARGA_POR_SEG)
-		if Input.is_action_just_released("ui_accept"):
+		if not pulsa:
 			soltar()
 	elif activo:
 		# de tanque: A/D (o el stick izquierdo, eje X) SOLO giran la mira,
@@ -243,8 +250,10 @@ func _girar_hacia(actual: Vector3, objetivo: Vector3, max_rad: float) -> Vector3
 ## esta manejando la caida) la camara persigue el rumbo real de la bola.
 func objetivo_camara(dt := 0.0) -> Vector3:
 	if activo:
-		return _bola.global_position - Vector3(sin(mira), 0, cos(mira)) * CAM_ATRAS_TIRO \
-			+ Vector3.UP * CAM_ALTO
+		var atras := CAM_ATRAS_JAULA if enjaulado else CAM_ATRAS_TIRO
+		var alto := CAM_ALTO_JAULA if enjaulado else CAM_ALTO
+		return _bola.global_position - Vector3(sin(mira), 0, cos(mira)) * atras \
+			+ Vector3.UP * alto
 	var plana := Vector3(_bola.linear_velocity.x, 0, _bola.linear_velocity.z)
 	if plana.length() > CAM_UMBRAL_QUIETO:
 		_dir_camara = _girar_hacia(_dir_camara, plana.normalized(), CAM_GIRO_MAX * dt)
@@ -271,7 +280,9 @@ func _paso(k: float, dt: float) -> float:
 func _mirada_deseada() -> Vector3:
 	if activo:
 		var dir := Vector3(sin(mira), 0, cos(mira))
-		return _bola.global_position + dir * 5.0 + Vector3.UP * 0.5
+		# enjaulado se mira mas cerca: adelantar 5 m saca la jaula de cuadro
+		var lejos := 1.5 if enjaulado else 5.0
+		return _bola.global_position + dir * lejos + Vector3.UP * 0.5
 	return _bola.global_position
 
 
@@ -295,3 +306,4 @@ func _mover_camara(dt: float) -> void:
 	_camara.look_at(_mirada)
 	var fov := CAM_FOV if activo else lerpf(CAM_FOV, CAM_FOV_MAX, _factor_velocidad())
 	_camara.fov = lerpf(_camara.fov, fov, _paso(CAM_FOV_SUAVIZADO, dt))
+
