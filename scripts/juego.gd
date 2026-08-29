@@ -425,7 +425,7 @@ func _physics_process(dt: float) -> void:
 		if _saltando:
 			_aterrizar()
 		# tambien vale meterlo rodando: es la parte de "llevalo tu" de SBG
-		if campo.embocada(bola.global_position):
+		if campo.embocada(bola.global_position, bola.linear_velocity):
 			_embocar()
 		return
 
@@ -435,7 +435,7 @@ func _physics_process(dt: float) -> void:
 		_poner_bola(_desde)
 		return
 
-	if campo.embocada(pos):
+	if campo.embocada(pos, vel):
 		_embocar()
 		return
 
@@ -769,6 +769,20 @@ func _self_check() -> void:
 	bola.linear_velocity = Vector3.ZERO
 	_angulo_rueda = 0.0
 	assert(campo.basura.size() > 0, "el hoyo se quedo sin basura que recoger")
+	# la meta es SUBIRSE a la camioneta: encima y posado cuenta; al lado,
+	# debajo, o pasandole por arriba a toda velocidad, no
+	# se prueba justo en el borde de la condicion de altura, no en el techo: el
+	# sitio donde uno se sube de verdad es el piso de la caja, y ahi es donde
+	# fallaba -el umbral estaba 18 cm por encima de ese piso-
+	var caja: AABB = campo._meta
+	var m := Vector3(caja.get_center().x,
+		caja.position.y + caja.size.y * campo.ALTURA_CAJA, caja.get_center().z)
+	assert(campo.embocada(m + Vector3.UP * 0.05), "posado en la caja no cuenta como llegar")
+	assert(not campo.embocada(m - Vector3.UP * 0.05), "por debajo del piso cuenta como llegar")
+	assert(not campo.embocada(m + Vector3.UP * 0.3, Vector3(20, 0, 0)),
+		"pasarle por arriba volando cuenta como llegar")
+	assert(not campo.embocada(m + Vector3(8, 0.3, 0)), "al lado cuenta como llegar")
+	assert(not campo.embocada(m - Vector3(0, 2.5, 0)), "por debajo cuenta como llegar")
 	# la jaula: la bola arranca dentro y la puerta mira a la bandera
 	assert(is_instance_valid(_jaula) and _jaula.puerta_entera(), "no hay jaula")
 	var dentro := bola.global_position - _jaula.global_position

@@ -24,6 +24,17 @@ const BASURA := "res://modelos/trash_and_debris.glb"
 const BASURAS := 16            # piezas por hoyo
 
 # medidas reales de golf
+# --- la meta: subirse a la camioneta ---
+const META := "CAMIONETA"      # nombre de la malla dentro del glb del mapa
+const MARGEN_META := 0.35      # fraccion del ancho que cuenta como "encima"
+# A partir de que altura de su caja se considera que estas ARRIBA. Medido con
+# rayos sobre la camioneta del muelle: el piso de la caja esta a 0.39 de su
+# alto y el techo de la cabina a 1.0, mientras que las ruedas apoyan en 0. Con
+# 0.45 solo valia subirse al techo; con esto vale la caja, que es donde se
+# sube, y sigue sin valer meterse debajo del chasis.
+const ALTURA_CAJA := 0.28
+const VEL_SUBIDO := 6.0        # m/s por encima de los cuales va de paso
+# ---------------------------------------
 const R_COPA := 0.054          # 108 mm de diametro
 const PROF_COPA := 0.12
 const R_PLATAFORMA := 3.0
@@ -59,6 +70,10 @@ var excluir: Array[RID] = []   # la bola, para que no la pisen los rayos
 var _curso: Node3D
 var _copa: Node3D
 var _tee := Vector3.ZERO
+# La meta es SUBIRSE A LA CAMIONETA que trae el mapa: se busca su malla al
+# montar el escenario y se guarda su caja en coordenadas de mundo. Si algun
+# mapa no la trae, se cae de vuelta a la copa de golf de siempre.
+var _meta := AABB()
 var _bandera := Vector3.ZERO
 var _labio := 0.0
 var animales: Array = []
@@ -127,6 +142,15 @@ func preparar() -> void:
 	for m in escaparate.find_children("*", "MeshInstance3D", true, false):
 		_moldes.append(m as MeshInstance3D)
 
+	# la camioneta del mapa es la meta: se guarda su caja YA colocada en el
+	# mundo, que el glb viene recentrado y sus coordenadas crudas no valen
+	var cam := _curso.find_child(META, true, false)
+	if cam is MeshInstance3D:
+		var mi := cam as MeshInstance3D
+		_meta = mi.global_transform * mi.mesh.get_aabb()
+		print("meta: %s en %s, caja %s" % [META,
+			str(_meta.get_center().round()), str(_meta.size.round())])
+
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	print("campo listo: %d mallas con colision, %s m" % [n, str(_aabb(_curso).size.round())])
@@ -163,9 +187,16 @@ func ir_a(i: int) -> void:
 	var t: Vector3 = $Tee.position
 	var b: Vector3 = $Bandera.position
 	_tee = Vector3(t.x, altura_suelo(t.x, t.z), t.z)
-	_bandera = Vector3(b.x, altura_suelo(b.x, b.z), b.z)
-	_labio = _bandera.y + ALTO_PLATAFORMA
-	_montar_copa()
+	if _meta.size != Vector3.ZERO:
+		# la meta es la camioneta: la bandera apunta a su caja, que es a donde
+		# hay que llegar, y no se planta ninguna copa sobre la cubierta
+		var c := _meta.get_center()
+		_bandera = Vector3(c.x, _meta.position.y + _meta.size.y, c.z)
+		_labio = _bandera.y
+	else:
+		_bandera = Vector3(b.x, altura_suelo(b.x, b.z), b.z)
+		_labio = _bandera.y + ALTO_PLATAFORMA
+		_montar_copa()
 	_poblar_fauna()
 	_poblar_basura()
 
@@ -209,9 +240,20 @@ func altura_suelo(x: float, z: float) -> float:
 	return h
 
 
-func embocada(pos: Vector3) -> bool:
-	return pos.y < _labio - 0.04 \
-		and Vector2(pos.x - _bandera.x, pos.z - _bandera.z).length() < R_COPA
+## Llego a la meta. Con la camioneta hay que estar ENCIMA, no al lado: dentro
+## de su huella -recortada, para que rozarle un guardabarros no cuente- y por
+## encima de la caja. Y hay que haberse posado: pasarle por arriba volando a
+## veinte metros por segundo no es subirse.
+func embocada(pos: Vector3, vel := Vector3.ZERO) -> bool:
+	if _meta.size == Vector3.ZERO:
+		return pos.y < _labio - 0.04 \
+			and Vector2(pos.x - _bandera.x, pos.z - _bandera.z).length() < R_COPA
+	if vel.length() > VEL_SUBIDO:
+		return false
+	var c := _meta.get_center()
+	return absf(pos.x - c.x) < _meta.size.x * MARGEN_META \
+		and absf(pos.z - c.z) < _meta.size.z * MARGEN_META \
+		and pos.y > _meta.position.y + _meta.size.y * ALTURA_CAJA
 
 
 ## ponytail: zonas por geometria, no por textura. La foto no dice donde acaba la

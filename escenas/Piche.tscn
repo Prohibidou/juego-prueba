@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://nv4bpr3ue734"]
 
-[ext_resource type="PackedScene" uid="uid://dgxdb7x06vb23" path="res://modelos/PicheLowHighTest07.fbx" id="1_ubphf"]
+[ext_resource type="PackedScene" uid="uid://cfjgnqvp0efek" path="res://modelos/PGJ_Piche_FINAL.glb" id="1_ubphf"]
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_cqm7f"]
 bounce = 0.5
