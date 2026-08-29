@@ -10,7 +10,7 @@ golf, asi que quedan par, tarjeta, "Birdie", penalizaciones por drop, y sobre
 todo una copa de 5.4 cm de radio como meta -`campo.embocada()`-, que para
 "llegar a un punto" es injugable. Lo que SI sirve tal cual: el impulso con
 barra, la dispersion, el timon en el aire, el salto, la conduccion, la stamina,
-la basura, los pateadores, la jaula y la intro. Lo que se llama "hoyo" en el
+la basura, la jaula y la intro. Lo que se llama "hoyo" en el
 codigo es un nivel; lo que se llama "golpe", un impulso.
 
 ## Como verificar
@@ -59,8 +59,8 @@ Para autorar con el MCP hay skill: `/godot-escena`. Para verificar,
 `/godot-verificar`.
 
 No verificar solo con asserts. Los asserts confirman que el codigo CORRE, no que
-se VEA. En esta sesion pasaron todos mientras la pantalla estaba entera roja, la
-camara dentro de un arbol y el pateador a 500 m de su propia area de deteccion.
+se VEA. Ya pasaron todos mientras la pantalla estaba entera roja y la camara
+dentro de un arbol.
 
 Una escena no depende de nada de fuera: se monta sola y avisa con senales. Nada
 de `get_node("..")` al padre. Senales hacia arriba, llamadas hacia abajo.
@@ -79,8 +79,7 @@ y por donde se sube.
 
 **Los rayos de altura paran en la PRIMERA colision, que bajo un arbol es la copa
 y no el suelo.** Costo el area pintada convertida en un telon rojo delante de la
-camara, la camioneta trepando follaje y los pateadores plantados a 15 m en el
-aire. Usar `campo.altura_suelo()`, que pela capas hasta el suelo, o
+camara y la camioneta trepando follaje. Usar `campo.altura_suelo()`, que pela capas hasta el suelo, o
 `campo.altura_terreno(x, z, techo)` con el techo justo encima de lo que buscas.
 
 **`Transform3D * AABB` REALINEA la caja con los ejes.** Encadenar dos (ir a
