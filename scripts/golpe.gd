@@ -20,12 +20,12 @@ const CAM_ALTO_TIRO := 1.7
 const CAM_ATRAS_TIRO := 3.2
 # La camara se aleja y abre el angulo con la velocidad: encuadra igual un putt
 # que un drive, y el ensanchado del fov da la sensacion de velocidad.
-const CAM_ATRAS_MIN := 5.0
-const CAM_ATRAS_MAX := 14.0
-const CAM_ALTO_MIN := 1.6
-const CAM_ALTO_MAX := 5.5
+const CAM_ATRAS_MIN := 3.0
+const CAM_ATRAS_MAX := 7.5
+const CAM_ALTO_MIN := 1.0
+const CAM_ALTO_MAX := 2.8
 const CAM_FOV := 62.0
-const CAM_FOV_MAX := 82.0
+const CAM_FOV_MAX := 74.0
 const CAM_VEL_REF := 55.0      # m/s a los que la camara esta del todo abierta
 const CAM_SUAVIZADO := 14.0
 const CAM_FOV_SUAVIZADO := 4.0 # el fov va mas lento que la posicion: asi se nota
@@ -217,6 +217,12 @@ func _factor_velocidad() -> float:
 	return clampf(_bola.linear_velocity.length() / CAM_VEL_REF, 0.0, 1.0)
 
 
+## Paso de suavizado independiente de los fps: con dt * k la camara va mas
+## brusca a 30 fps que a 144 y el seguimiento se siente a tirones.
+func _paso(k: float, dt: float) -> float:
+	return 1.0 - exp(-k * dt)
+
+
 func encuadrar() -> void:
 	_dir_camara = Vector3(sin(mira), 0, cos(mira))
 	_camara.fov = CAM_FOV
@@ -225,10 +231,9 @@ func encuadrar() -> void:
 
 func _mover_camara(dt: float) -> void:
 	var suave := CAM_SUAVIZADO if not activo else 5.0
-	_camara.global_position = _camara.global_position.lerp(objetivo_camara(),
-		clampf(dt * suave, 0, 1))
+	_camara.global_position = _camara.global_position.lerp(objetivo_camara(), _paso(suave, dt))
 	var fov := CAM_FOV if activo else lerpf(CAM_FOV, CAM_FOV_MAX, _factor_velocidad())
-	_camara.fov = lerpf(_camara.fov, fov, clampf(dt * CAM_FOV_SUAVIZADO, 0, 1))
+	_camara.fov = lerpf(_camara.fov, fov, _paso(CAM_FOV_SUAVIZADO, dt))
 	if activo:
 		# mirar por la linea de tiro, no a la bola: se ve a donde va el golpe
 		var dir := Vector3(sin(mira), 0, cos(mira))

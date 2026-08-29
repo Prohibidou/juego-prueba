@@ -13,12 +13,11 @@ const VEL_MARCA := 15.0
 const PENA_ANIMAL := 2
 const PENA_DROP := 1
 const MAX_MARCAS := 30
-# A escala real la bola son 4 cm: a 20 m ya no se ve. Se dibuja agrandada en
-# proporcion a la distancia, de modo que ocupa SIEMPRE lo mismo en pantalla. La
-# colision sigue siendo la esfera de 4 cm.
+# A escala real la bola son 4 cm: a 20 m ya no se ve. Se dibuja agrandada de
+# modo que ocupe SIEMPRE la misma fraccion de la pantalla, calculada con el fov
+# y la distancia reales de la camara. La colision sigue siendo la esfera de 4 cm.
 const MODELO_BOLA := "res://modelos/PicheLowHighTest07.obj"
-const DIST_REF := 1.15    # baja este numero y la bola se ve mas grande
-const AGRANDA_MAX := 25.0
+const VISTA_PANTALLA := 0.075   # subelo y el piche se ve mas grande
 # ----------------------------
 
 var indice := 0
@@ -34,7 +33,7 @@ var _giro := 0.0
 var _en_aire := false
 var _desde := Vector3.ZERO
 var _ultimo := 0.0        # distancia del ultimo golpe, para el aviso
-var _escala_bola := 1.0   # sale del tamano del modelo, no de un numero a ojo
+var _diam_bola := 1.0     # tamano del modelo tal cual viene, en sus unidades
 var _centro_bola := Vector3.ZERO
 var _marcas: Array = []
 
@@ -122,7 +121,7 @@ func _crear_bola() -> void:
 	# el modelo no tiene por que venir centrado ni a escala: se ajusta al
 	# diametro real de la bola y se recentra sobre el cuerpo rigido
 	var caja: AABB = vista.mesh.get_aabb()
-	_escala_bola = Util.RADIO * 2.0 / maxf(caja.size[caja.size.max_axis_index()], 0.0001)
+	_diam_bola = maxf(caja.size[caja.size.max_axis_index()], 0.0001)
 	_centro_bola = caja.get_center()
 	_escalar_vista(1.0)
 	bola.add_child(vista)
@@ -134,12 +133,15 @@ func _crear_bola() -> void:
 	add_child(bola)
 
 
-## El recentrado tiene que ir con la escala: si no, al agrandarse el modelo se
-## desplaza y deja de girar sobre la bola.
-func _escalar_vista(crece: float) -> void:
-	var e := _escala_bola * crece
+## Escala el modelo para que ocupe VISTA_PANTALLA del alto del encuadre, este
+## donde este la camara y con el fov que tenga. Nunca por debajo del tamano real.
+## El recentrado va con la escala: si no, el modelo se desplaza al crecer y deja
+## de girar sobre la bola. El levante lo apoya en el suelo en vez de enterrarlo.
+func _escalar_vista(dist: float) -> void:
+	var alto := 2.0 * dist * tan(deg_to_rad(camara.fov) * 0.5)
+	var e := maxf(Util.RADIO * 2.0, VISTA_PANTALLA * alto) / _diam_bola
 	vista.scale = Vector3.ONE * e
-	vista.position = -_centro_bola * e
+	vista.position = -_centro_bola * e + Vector3.UP * (_diam_bola * e * 0.5 - Util.RADIO)
 
 
 func _crear_ui() -> void:
@@ -257,8 +259,7 @@ func _process(dt: float) -> void:
 	# Que la bola no se pierda de vista. Parada se dibuja a tamano real, que es
 	# cuando la camara esta encima y se vería un melon al lado del palo; en
 	# juego se agranda con la distancia, de modo que ocupa siempre lo mismo.
-	var lejos := camara.global_position.distance_to(bola.global_position)
-	_escalar_vista(1.0 if quieto else clampf(lejos / DIST_REF, 1.0, AGRANDA_MAX))
+	_escalar_vista(camara.global_position.distance_to(bola.global_position))
 
 	barra.value = golpe.fuerza * 100.0
 	var p := bola.global_position
@@ -375,6 +376,12 @@ func _self_check() -> void:
 	assert(t != Vector3.ZERO and b != Vector3.ZERO, "tee o bandera sin colocar")
 	assert(absf(t.y) > 0.01, "el rayo de altura no encuentra el campo bajo el tee")
 	assert(campo.R_COPA > Util.RADIO * 1.5, "la copa no admite la bola")
+	# el piche tiene que ocupar lo mismo en pantalla este cerca o lejos
+	_escalar_vista(4.0)
+	var cerca := _diam_bola * vista.scale.x / 4.0
+	_escalar_vista(40.0)
+	assert(is_equal_approx(cerca, _diam_bola * vista.scale.x / 40.0),
+		"la bola no mantiene el tamano en pantalla")
 	print("self-check OK | tee %s | bandera %s | %d m | par %d"
 		% [str(t.round()), str(b.round()),
 		   roundi(Vector2(t.x - b.x, t.z - b.z).length()), campo.par()])
