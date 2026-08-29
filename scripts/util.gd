@@ -65,7 +65,9 @@ static func mat(c: Color, vertex_color := false) -> StandardMaterial3D:
 static func fisica() -> PhysicsMaterial:
 	var f := PhysicsMaterial.new()
 	f.friction = 1.0
-	f.bounce = 0.35
+	# SBG vive del rebote: la bola pica en las paredes y llega al hoyo por donde
+	# no la esperabas. Con 0.35 se moria en el primer bote.
+	f.bounce = 0.5
 	return f
 
 

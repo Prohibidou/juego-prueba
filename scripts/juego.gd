@@ -13,6 +13,12 @@ const VEL_MARCA := 15.0
 const PENA_ANIMAL := 2
 const PENA_DROP := 1
 const MAX_MARCAS := 30
+# --- direccion en el aire (SBG) ---
+const AIRE_ACEL := 11.0     # m/s2 laterales mientras se dirige
+const AIRE_TIEMPO := 1.1    # segundos de timon por golpe
+# --- puntos (SBG puntua, no cuenta golpes) ---
+const PUNTOS_HOYO := 100
+const PUNTOS_GOLPE := 25    # lo que vale cada golpe ahorrado sobre el par
 # A escala real la bola son 4 cm: a 20 m ya no se ve. Se dibuja agrandada de
 # modo que ocupe SIEMPRE la misma fraccion de la pantalla, calculada con el fov
 # y la distancia reales de la camara. La colision sigue siendo la esfera de 4 cm.
@@ -34,7 +40,8 @@ var _en_aire := false
 var _desde := Vector3.ZERO
 var _ultimo := 0.0        # distancia del ultimo golpe, para el aviso
 var _diam_bola := 1.0     # tamano del modelo tal cual viene, en sus unidades
-var _centro_bola := Vector3.ZERO
+var _caja_bola := AABB()
+var _aire := 0.0          # timon que le queda a este golpe
 var _marcas: Array = []
 
 var campo: Campo
@@ -59,7 +66,7 @@ func _ready() -> void:
 
 	var sol := DirectionalLight3D.new()
 	sol.rotation_degrees = Vector3(-48, -35, 0)
-	sol.light_energy = 1.1
+	sol.light_energy = 1.35
 	sol.shadow_enabled = true
 	sol.directional_shadow_max_distance = 300.0
 	add_child(sol)
@@ -76,7 +83,9 @@ func _ready() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = cielo
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.9
+	# con 0.9 el relleno del cielo tapaba la sombra propia y el piche se veia
+	# como una silueta plana; a 0.5 el sol vuelve a modelar el volumen
+	env.ambient_light_energy = 0.5
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
 	env.fog_enabled = true
 	env.fog_density = 0.0008
@@ -120,10 +129,10 @@ func _crear_bola() -> void:
 	vista.mesh = load(MODELO_BOLA)
 	# el modelo no tiene por que venir centrado ni a escala: se ajusta al
 	# diametro real de la bola y se recentra sobre el cuerpo rigido
-	var caja: AABB = vista.mesh.get_aabb()
-	_diam_bola = maxf(caja.size[caja.size.max_axis_index()], 0.0001)
-	_centro_bola = caja.get_center()
-	_escalar_vista(1.0)
+	_caja_bola = vista.mesh.get_aabb()
+	_diam_bola = maxf(_caja_bola.size[_caja_bola.size.max_axis_index()], 0.0001)
+	# la vista se coloca a mano en coordenadas de mundo, no la arrastra la bola
+	vista.top_level = true
 	bola.add_child(vista)
 
 	estela = Util.particulas(Color(1, 1, 1, 0.5), 0.4, 20)
@@ -131,17 +140,23 @@ func _crear_bola() -> void:
 	estela.emitting = false
 	bola.add_child(estela)
 	add_child(bola)
+	_escalar_vista(1.0)   # ya en el arbol: la vista se coloca en mundo
 
 
 ## Escala el modelo para que ocupe VISTA_PANTALLA del alto del encuadre, este
 ## donde este la camara y con el fov que tenga. Nunca por debajo del tamano real.
-## El recentrado va con la escala: si no, el modelo se desplaza al crecer y deja
-## de girar sobre la bola. El levante lo apoya en el suelo en vez de enterrarlo.
+##
+## El apoyo es lo delicado: el piche gira con la bola, asi que su punto mas bajo
+## cambia con la vuelta que lleve. Se calcula la caja YA GIRADA y se apoya justo
+## en el punto de contacto de la bola. Antes el levante iba en ejes de la bola y
+## al rodar apuntaba hacia abajo: por eso se hundia en el mapa.
 func _escalar_vista(dist: float) -> void:
 	var alto := 2.0 * dist * tan(deg_to_rad(camara.fov) * 0.5)
 	var e := maxf(Util.RADIO * 2.0, VISTA_PANTALLA * alto) / _diam_bola
-	vista.scale = Vector3.ONE * e
-	vista.position = -_centro_bola * e + Vector3.UP * (_diam_bola * e * 0.5 - Util.RADIO)
+	var base := bola.global_basis.scaled(Vector3.ONE * e)
+	var caja := Transform3D(base, Vector3.ZERO) * _caja_bola
+	vista.global_transform = Transform3D(base, bola.global_position - Vector3(
+		caja.get_center().x, caja.position.y + Util.RADIO, caja.get_center().z))
 
 
 func _crear_ui() -> void:
@@ -236,6 +251,7 @@ func _drop() -> void:
 func _on_golpeado(velocidad: Vector3) -> void:
 	golpes += 1
 	_desde = bola.global_position
+	_aire = AIRE_TIEMPO
 	_v_pendiente = velocidad
 	# mas loft, mas efecto hacia atras; y desde el rough la bola sale sin freno
 	var z := campo.zona(_desde.x, _desde.z)
@@ -246,6 +262,9 @@ func _process(dt: float) -> void:
 	if not listo:
 		return
 	golpe.activo = quieto and not embocada
+	# desde el rough se controla peor: el mismo dato que retiene el efecto
+	golpe.estabilidad = campo.retiene_efecto(campo.zona(
+		bola.global_position.x, bola.global_position.z))
 
 	if golpe.activo and Input.is_key_pressed(KEY_R):
 		_drop()
@@ -266,11 +285,14 @@ func _process(dt: float) -> void:
 	var b := campo.pos_bandera()
 	var dist := Vector2(p.x - b.x, p.z - b.z).length()
 	var v := campo.viento()
-	hud.text = ("Hoyo %d/%d | Par %d | Golpes %d | Total %d | %d m al hoyo\n"
-		+ "Angulo %d deg | fuerza %d%% (%.0f m/s) | %s | viento %.0f m/s") % [
+	hud.text = ("Hoyo %d/%d | Par %d | Golpes %d | %d puntos | %d m al hoyo\n"
+		+ "Angulo %d deg | fuerza %d%% (%.0f m/s) +-%.1f deg | %s | viento %.0f m/s\n"
+		+ "Timon %s") % [
 		indice + 1, Campo.HOYOS.size(), campo.par(), golpes, total, roundi(dist),
 		roundi(golpe.loft), roundi(golpe.fuerza * 100), golpe.velocidad(),
-		campo.nombre_zona(campo.zona(p.x, p.z)), Vector2(v.x, v.z).length()]
+		rad_to_deg(golpe.dispersion()),
+		campo.nombre_zona(campo.zona(p.x, p.z)), Vector2(v.x, v.z).length(),
+		"#".repeat(ceili(_aire / AIRE_TIEMPO * 10.0)) if _aire > 0.0 else "-"]
 
 
 func _physics_process(dt: float) -> void:
@@ -310,6 +332,14 @@ func _physics_process(dt: float) -> void:
 
 	_giro = maxf(0.0, _giro - dt / Util.VIDA_GIRO)
 	bola.apply_central_force(Util.fuerza_aire(vel, campo.viento(), _giro))
+
+	# timon: solo en el aire y solo mientras quede presupuesto. Empuja de lado,
+	# perpendicular al avance, asi que corrige la linea sin regalar distancia.
+	var plana := Vector3(vel.x, 0, vel.z)
+	if volando and _aire > 0.0 and absf(golpe.timon) > 0.05 and plana.length() > 1.0:
+		var lado := Vector3.UP.cross(plana.normalized())
+		bola.apply_central_force(lado * golpe.timon * AIRE_ACEL * Util.MASA)
+		_aire = maxf(0.0, _aire - dt)
 
 	if campo.choque(pos, vel) == "animal":
 		golpes += PENA_ANIMAL
@@ -353,10 +383,13 @@ func _embocar() -> void:
 	embocada = true
 	bola.freeze = true
 	estela.emitting = false
-	total += golpes
 	tarjeta.append(golpes)
 	var d := golpes - campo.par()
-	msg.text = "Birdie!" if d < 0 else ("Par" if d == 0 else "+%d" % d)
+	# SBG puntua en vez de contar golpes: terminar vale, ahorrar golpes vale mas
+	var puntos := maxi(0, PUNTOS_HOYO - d * PUNTOS_GOLPE)
+	total += puntos
+	msg.text = "%s  +%d" % [
+		"Birdie!" if d < 0 else ("Par" if d == 0 else "+%d" % d), puntos]
 	await get_tree().create_timer(1.8).timeout
 	msg.text = ""
 	golpes = 0
@@ -382,6 +415,13 @@ func _self_check() -> void:
 	_escalar_vista(40.0)
 	assert(is_equal_approx(cerca, _diam_bola * vista.scale.x / 40.0),
 		"la bola no mantiene el tamano en pantalla")
+	# y apoyarse en el suelo con cualquier vuelta, que es lo que se hundia
+	bola.global_rotation = Vector3(1.1, 0.7, -0.4)
+	_escalar_vista(6.0)
+	var apoyo: AABB = vista.global_transform * _caja_bola
+	assert(absf(apoyo.position.y - (bola.global_position.y - Util.RADIO)) < 0.001,
+		"el piche no se apoya en el suelo al girar")
+	bola.global_rotation = Vector3.ZERO
 	print("self-check OK | tee %s | bandera %s | %d m | par %d"
 		% [str(t.round()), str(b.round()),
 		   roundi(Vector2(t.x - b.x, t.z - b.z).length()), campo.par()])

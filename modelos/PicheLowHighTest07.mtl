@@ -1,10 +1,17 @@
 # ponytail: el .obj referencia este .mtl y sin el Godot aborta la importacion.
-# Colores planos a ojo; si el modelo trae texturas, sustituir por el .mtl real.
+# Ns lo lee Godot como rugosidad: con Ns bajo todo sale mate y el piche se ve
+# como una silueta plana. Ks a 0 para que no lo trate como metal.
 newmtl Material.001
 Kd 0.42 0.33 0.26
+Ks 0.0 0.0 0.0
+Ns 300
 
 newmtl garras_mat
 Kd 0.85 0.82 0.72
+Ks 0.0 0.0 0.0
+Ns 500
 
 newmtl ojos_mat
 Kd 0.05 0.04 0.04
+Ks 0.0 0.0 0.0
+Ns 900

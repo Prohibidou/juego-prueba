@@ -13,7 +13,18 @@ const CARGA_POR_SEG := 0.5  # 2 s de barra entera: antes era 0.9 s y todo salia 
 const CURVA := 0.75
 const LOFT_MIN := 5.0
 const LOFT_MAX := 55.0
+# Cuanto mas cargas, mas lejos llega y menos control tienes. Sin esto la barra
+# no era una decision: siempre convenia el maximo. Va con el CUADRADO de la
+# fuerza, asi que medio golpe es casi exacto y el drive completo es una apuesta.
+const DISPERSA := 0.055     # rad de error a barra llena y desde la calle
 # --------------------------------
+
+# --- direccion en el aire ---
+# Un presupuesto corto por golpe: corrige una salida torcida, no dibuja la
+# trayectoria entera. Lo gasta juego.gd, que es quien ve si la bola vuela.
+const TIMON_TACTIL := 0.03  # cuanto desvia un pixel de arrastre
+const TIMON_VUELVE := 2.0   # el arrastre se suelta solo al soltar el dedo
+# ----------------------------
 
 # --- camara ---
 const CAM_ALTO_TIRO := 1.7
@@ -49,6 +60,8 @@ var loft := 22.0
 var fuerza := 0.0
 var activo := false
 var viento := Vector3.ZERO
+var estabilidad := 1.0       # 1 en calle, menos en rough: alli se controla peor
+var timon := 0.0             # -1..1 para dirigir en el aire; lo lee juego.gd
 var suelo: Callable          # (x, z) -> altura del terreno
 
 var _bola: RigidBody3D
@@ -61,6 +74,7 @@ var _swing := 0.0            # angulo en el plano: >0 atras, 0 impacto, <0 acomp
 var _animando := false       # el palo sigue visible aunque la bola ya salio
 var _pos_golpe := Vector3.ZERO
 var _dir_camara := Vector3.FORWARD
+var _timon_tactil := 0.0
 
 
 func preparar(bola: RigidBody3D, camara: Camera3D) -> void:
@@ -119,15 +133,24 @@ func soltar() -> void:
 	var v := velocidad()
 	_pos_golpe = _bola.global_position
 	_animar_golpe()
-	golpeado.emit(direccion() * v)
+	# el error se sortea AQUI, no al apuntar: el jugador ve a donde apunto y
+	# entiende que se le fue por cargar de mas, no que la mira mienta
+	var e := dispersion()
+	golpeado.emit(_dir(mira + randf_range(-e, e),
+		clampf(loft + rad_to_deg(randf_range(-e, e)), LOFT_MIN, LOFT_MAX)) * v)
 	fuerza = 0.0
 
 
 func _unhandled_input(e: InputEvent) -> void:
 	# apuntar arrastrando: en movil funciona igual, con el raton emulado
-	if e is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and activo:
+	if not (e is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)):
+		return
+	if activo:
 		mira -= e.relative.x * 0.004
 		loft = clampf(loft + e.relative.y * 0.06, LOFT_MIN, LOFT_MAX)
+	else:
+		# el mismo gesto: con la bola en el aire el arrastre es el timon
+		_timon_tactil = clampf(_timon_tactil + e.relative.x * TIMON_TACTIL, -1.0, 1.0)
 
 
 func _process(dt: float) -> void:
@@ -147,14 +170,27 @@ func _process(dt: float) -> void:
 		if Input.is_action_pressed("ui_up"): loft = minf(LOFT_MAX, loft + dt * 25.0)
 		if Input.is_action_pressed("ui_down"): loft = maxf(LOFT_MIN, loft - dt * 25.0)
 
+	_timon_tactil = move_toward(_timon_tactil, 0.0, dt * TIMON_VUELVE)
+	timon = 0.0 if activo else clampf(
+		Input.get_axis("ui_left", "ui_right") + _timon_tactil, -1.0, 1.0)
+
 	_colocar_palo()
 	_dibujar_mira()
 	_mover_camara(dt)
 
 
 func direccion() -> Vector3:
-	var a := deg_to_rad(loft)
-	return Vector3(sin(mira) * cos(a), sin(a), cos(mira) * cos(a)).normalized()
+	return _dir(mira, loft)
+
+
+func _dir(m: float, l: float) -> Vector3:
+	var a := deg_to_rad(l)
+	return Vector3(sin(m) * cos(a), sin(a), cos(m) * cos(a)).normalized()
+
+
+## Radianes de error que puede salir este golpe, para el HUD y para soltar().
+func dispersion() -> float:
+	return DISPERSA * fuerza * fuerza / maxf(estabilidad, 0.1)
 
 
 ## Solo se marca HACIA DONDE se apunta, no donde va a caer: adivinar la caida
