@@ -20,6 +20,20 @@ const AIRE_TIEMPO := 1.1    # segundos de timon por golpe
 const CONDUCE_ACEL := 7.0   # m/s2 que mete el stick izquierdo
 const CONDUCE_MAX := 4.5    # m/s: es andar, no un golpe
 const GIRO_MAX := 9.0       # rad/s: por encima de esto la vuelta es un borron
+# --- stamina y correa ---
+# Andar es gratis pero solo alrededor de donde caiste; para ir mas lejos hay
+# que saltar, y saltar cuesta stamina. La basura del campo la repone: es lo que
+# obliga a desviarse de la linea recta al hoyo.
+const RADIO_ANDAR := 5.0
+const PASOS_LIMITE := 48
+const STAMINA_MAX := 100.0
+const STAMINA_BASURA := 20.0
+const STAMINA_SALTO := 60.0   # lo que cuesta un salto a barra llena
+# Por debajo de esto no hay impulso: ni barra, ni golpe minimo. Es el mismo
+# numero que pinta de rojo el circulo y la barra, para que lo que se ve y lo
+# que se puede hacer sean la misma regla.
+const STAMINA_MIN := STAMINA_SALTO * 0.2
+const R_RECOGE := 1.2
 # --- puntos (SBG puntua, no cuenta golpes) ---
 const PUNTOS_HOYO := 100
 const PUNTOS_GOLPE := 25    # lo que vale cada golpe ahorrado sobre el par
@@ -45,6 +59,9 @@ var _desde := Vector3.ZERO
 var _ultimo := 0.0        # distancia del ultimo golpe, para el aviso
 var _diam_bola := 1.0     # tamano del modelo tal cual viene, en sus unidades
 var _caja_bola := AABB()
+var stamina := STAMINA_MAX
+var _ancla := Vector3.ZERO               # centro del circulo en el que se anda
+var _limite: MeshInstance3D
 var _angulo_rueda := 0.0                 # cuanto lleva rodado
 var _eje_rueda := Vector3.RIGHT          # el eje del disco: su cara plana
 var _dir_rueda := Vector3.FORWARD
@@ -61,6 +78,7 @@ var entorno: WorldEnvironment
 var hud: Label
 var msg: Label
 var barra: ProgressBar
+var barra_stam: ProgressBar
 
 
 func _ready() -> void:
@@ -100,6 +118,7 @@ func _ready() -> void:
 	add_child(entorno)
 
 	_crear_bola()
+	_crear_limite()
 	_crear_ui()
 
 	golpe = $Golpe
@@ -210,6 +229,33 @@ func _escalar_vista(dist: float, dt := 0.0) -> void:
 		caja.get_center().x, caja.position.y + Util.RADIO, caja.get_center().z))
 
 
+## El circulo hasta donde se puede andar. Se dibuja una vez por anclaje, no por
+## fotograma: cada punto es un rayo contra el terreno y son 48.
+func _crear_limite() -> void:
+	_limite = MeshInstance3D.new()
+	_limite.mesh = ImmediateMesh.new()
+	var m := Util.mat(Color.WHITE)
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_limite.material_override = m
+	_limite.top_level = true
+	add_child(_limite)
+
+
+## Fija el centro del circulo donde esta la bola y redibuja el borde.
+func _anclar() -> void:
+	_ancla = bola.global_position
+	var im: ImmediateMesh = _limite.mesh
+	im.clear_surfaces()
+	im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+	for i in PASOS_LIMITE + 1:
+		var a := TAU * i / PASOS_LIMITE
+		var x := _ancla.x + cos(a) * RADIO_ANDAR
+		var z := _ancla.z + sin(a) * RADIO_ANDAR
+		im.surface_add_vertex(Vector3(x, campo.altura_terreno(x, z) + 0.06, z))
+	im.surface_end()
+
+
 func _crear_ui() -> void:
 	var capa := CanvasLayer.new()
 	add_child(capa)
@@ -230,6 +276,14 @@ func _crear_ui() -> void:
 	barra.custom_minimum_size = Vector2(320, 22)
 	barra.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 40)
 	capa.add_child(barra)
+
+	barra_stam = ProgressBar.new()
+	barra_stam.show_percentage = false
+	barra_stam.max_value = STAMINA_MAX
+	barra_stam.custom_minimum_size = Vector2(320, 14)
+	barra_stam.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM,
+		Control.PRESET_MODE_MINSIZE, 72)
+	capa.add_child(barra_stam)
 
 	if DisplayServer.is_touchscreen_available():
 		var pegar := Button.new()
@@ -255,6 +309,7 @@ func _ir_a_hoyo(i: int) -> void:
 	campo.ir_a(i)
 	golpe.reset(campo.pos_tee(), campo.pos_bandera())
 	golpe.viento = campo.viento()
+	stamina = STAMINA_MAX
 	_poner_bola(campo.pos_tee())
 	golpe.encuadrar()
 
@@ -272,6 +327,7 @@ func _poner_bola(donde: Vector3) -> void:
 	estela.emitting = false
 	_t_lento = 0.0
 	_aplicar_damp()
+	_anclar()
 
 
 func _aplicar_damp() -> void:
@@ -289,6 +345,8 @@ func _drop() -> void:
 
 func _on_golpeado(velocidad: Vector3) -> void:
 	golpes += 1
+	# fuerza sigue puesta: golpe.gd la borra despues de emitir
+	stamina = maxf(0.0, stamina - STAMINA_SALTO * golpe.fuerza)
 	_desde = bola.global_position
 	_aire = AIRE_TIEMPO
 	_v_pendiente = velocidad
@@ -305,6 +363,22 @@ func _process(dt: float) -> void:
 	# desde el rough se controla peor: el mismo dato que retiene el efecto
 	golpe.estabilidad = campo.retiene_efecto(campo.zona(
 		bola.global_position.x, bola.global_position.z))
+	# sin stamina no hay impulso: la barra no sube y cargar() ni empieza
+	golpe.tope = clampf(stamina / STAMINA_SALTO, 0.0, 1.0)
+	golpe.puede_saltar = stamina >= STAMINA_MIN
+
+	var cogidas := campo.recoger(bola.global_position, R_RECOGE)
+	if cogidas > 0:
+		stamina = minf(STAMINA_MAX, stamina + cogidas * STAMINA_BASURA)
+		_aviso("+%d stamina" % roundi(cogidas * STAMINA_BASURA), 0.8)
+
+	# verde mientras quede para saltar, rojo cuando ya no
+	var hay := stamina >= STAMINA_MIN
+	_limite.visible = golpe.activo
+	_limite.material_override.albedo_color = (Color(0.45, 1.0, 0.55, 0.8)
+		if hay else Color(1.0, 0.4, 0.35, 0.8))
+	barra_stam.value = stamina
+	barra_stam.modulate = Color(0.45, 1.0, 0.55) if hay else Color(1.0, 0.4, 0.35)
 
 	if golpe.activo and Input.is_key_pressed(KEY_R):
 		_drop()
@@ -323,9 +397,10 @@ func _process(dt: float) -> void:
 	var dist := Vector2(p.x - b.x, p.z - b.z).length()
 	var v := campo.viento()
 	hud.text = ("Hoyo %d/%d | Par %d | Golpes %d | %d puntos | %d m al hoyo\n"
-		+ "Fuerza %d%% (%.0f m/s) +-%.1f deg | %s | viento %.0f m/s\n"
+		+ "Stamina %d | basura %d | Fuerza %d%% (%.0f m/s) +-%.1f deg | %s | viento %.0f m/s\n"
 		+ "Timon %s") % [
 		indice + 1, Campo.HOYOS.size(), campo.par(), golpes, total, roundi(dist),
+		roundi(stamina), campo.basura.size(),
 		roundi(golpe.fuerza * 100), golpe.velocidad(),
 		rad_to_deg(golpe.dispersion()),
 		campo.nombre_zona(campo.zona(p.x, p.z)), Vector2(v.x, v.z).length(),
@@ -347,6 +422,7 @@ func _physics_process(dt: float) -> void:
 
 	if quieto:
 		_conducir()
+		_atar()
 		# tambien vale meterlo rodando: es la parte de "llevalo tu" de SBG
 		if campo.embocada(bola.global_position):
 			_embocar()
@@ -395,6 +471,7 @@ func _physics_process(dt: float) -> void:
 			bola.freeze = true
 			quieto = true
 			_ultimo = Vector2(pos.x - _desde.x, pos.z - _desde.z).length()
+			_anclar()
 			_aviso("%d m" % roundi(_ultimo), 1.6)
 	else:
 		_t_lento = 0.0
@@ -409,8 +486,35 @@ func _conducir() -> void:
 		return
 	if Vector3(bola.linear_velocity.x, 0, bola.linear_velocity.z).length() > CONDUCE_MAX:
 		return
+	# la correa: andando no se sale del circulo. En el borde se deja empujar
+	# hacia dentro, si no se quedaria pegado al limite sin poder volver.
+	var fuera := Vector2(bola.global_position.x - _ancla.x,
+		bola.global_position.z - _ancla.z)
+	if fuera.length() >= RADIO_ANDAR and Vector2(dir.x, dir.z).dot(fuera.normalized()) > 0.0:
+		return
 	bola.freeze = false      # congelada no admite fuerzas
 	bola.apply_central_force(dir * CONDUCE_ACEL * Util.MASA)
+
+
+## Andando no se sale del circulo. No basta con dejar de empujar: con la
+## inercia se cruzaba igual. Se le quita la velocidad que apunta hacia fuera y
+## se le devuelve al borde.
+##
+## ponytail: mover un cuerpo rigido a mano fuera de _integrate_forces no es lo
+## fino, pero aqui son centimetros y solo en el borde. Si diera guerra, lo suyo
+## seria un muro de colision cilindrico que se mueve con el ancla.
+func _atar() -> void:
+	var d := Vector2(bola.global_position.x - _ancla.x,
+		bola.global_position.z - _ancla.z)
+	if d.length() <= RADIO_ANDAR:
+		return
+	var n := d.normalized()
+	var fuera := Vector3(n.x, 0, n.y)
+	var salida := bola.linear_velocity.dot(fuera)
+	if salida > 0.0:
+		bola.linear_velocity -= fuera * salida
+	bola.global_position = Vector3(_ancla.x + n.x * RADIO_ANDAR,
+		bola.global_position.y, _ancla.z + n.y * RADIO_ANDAR)
 
 
 func _marca(pos: Vector3, v: float) -> void:
@@ -485,6 +589,28 @@ func _self_check() -> void:
 		"la cara plana del disco no queda perpendicular a la marcha")
 	bola.linear_velocity = Vector3.ZERO
 	_angulo_rueda = 0.0
+	assert(campo.basura.size() > 0, "el hoyo se quedo sin basura que recoger")
+	# la correa: se le empuja lejos y tiene que volver al borde
+	var centro := bola.global_position
+	bola.global_position = centro + Vector3(RADIO_ANDAR * 3.0, 0, 0)
+	bola.linear_velocity = Vector3(9.0, 0, 0)
+	_atar()
+	assert(Vector2(bola.global_position.x - _ancla.x,
+		bola.global_position.z - _ancla.z).length() <= RADIO_ANDAR + 0.001,
+		"el piche se sale del area")
+	assert(bola.linear_velocity.x <= 0.001, "no se le quita la velocidad de salida")
+	bola.global_position = centro
+	bola.linear_velocity = Vector3.ZERO
+	# y sin stamina no hay impulso
+	var stamina_previa := stamina
+	stamina = 0.0
+	golpe.puede_saltar = false
+	golpe.activo = true
+	golpe.cargar()
+	golpe.soltar()
+	assert(_v_pendiente == Vector3.ZERO, "salio impulso sin stamina")
+	stamina = stamina_previa
+	golpe.puede_saltar = true
 	print("modelo %s | caja %s | diametro %.2f u"
 		% [MODELO_BOLA.get_file(), str(_caja_bola), _diam_bola])
 	print("self-check OK | tee %s | bandera %s | %d m | par %d"
@@ -497,3 +623,4 @@ func _self_check() -> void:
 		golpe.fuerza = 1.0
 		golpe.soltar()
 		assert(_v_pendiente != Vector3.ZERO, "el golpe no salio")
+		assert(stamina < STAMINA_MAX, "el salto no gasta stamina")

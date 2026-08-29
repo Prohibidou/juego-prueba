@@ -58,6 +58,8 @@ var fuerza := 0.0
 var activo := false
 var viento := Vector3.ZERO
 var estabilidad := 1.0       # 1 en calle, menos en rough: alli se controla peor
+var tope := 1.0              # cuanta barra deja cargar la stamina; lo pone juego.gd
+var puede_saltar := true     # sin stamina no hay impulso; lo pone juego.gd
 var timon := 0.0             # -1..1 para dirigir en el aire; lo lee juego.gd
 var suelo: Callable          # (x, z) -> altura del terreno
 
@@ -96,7 +98,7 @@ func velocidad() -> float:
 
 
 func cargar() -> void:
-	if activo and not _cargando:
+	if activo and not _cargando and puede_saltar:
 		_cargando = true
 		fuerza = 0.0
 
@@ -132,7 +134,7 @@ func _process(dt: float) -> void:
 	if activo and Input.is_action_just_pressed("ui_accept"):
 		cargar()
 	if _cargando:
-		fuerza = minf(1.0, fuerza + dt * CARGA_POR_SEG)
+		fuerza = minf(tope, fuerza + dt * CARGA_POR_SEG)
 		if Input.is_action_just_released("ui_accept"):
 			soltar()
 	elif activo:

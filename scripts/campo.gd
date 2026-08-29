@@ -14,6 +14,12 @@ class_name Campo
 const CURSO := "res://resources-3d/overlook_golf_course.glb"
 const ESCALA := 1.0 / 0.0018   # deshace la escala que mete Sketchfab
 
+# La basura viene como un escaparate de Sketchfab: cuarenta y pico piezas
+# sueltas (latas, cajas, ladrillos) repartidas sobre un plano. Se usan de
+# molde, se duplican y se siembran por el pasillo del hoyo.
+const BASURA := "res://modelos/trash_and_debris.glb"
+const BASURAS := 16            # piezas por hoyo
+
 # medidas reales de golf
 const R_COPA := 0.054          # 108 mm de diametro
 const PROF_COPA := 0.12
@@ -56,6 +62,9 @@ var _tee := Vector3.ZERO
 var _bandera := Vector3.ZERO
 var _labio := 0.0
 var animales: Array = []
+var basura: Array = []
+
+var _moldes: Array[MeshInstance3D] = []
 
 
 ## Monta el campo. Hay que esperarlo: la colision no existe hasta que la fisica
@@ -82,6 +91,12 @@ func preparar() -> void:
 				copia.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 				m.set_surface_override_material(i, copia)
 		n += 1
+	var escaparate := (load(BASURA) as PackedScene).instantiate()
+	escaparate.visible = false     # se queda de molde, no se ve
+	add_child(escaparate)
+	for m in escaparate.find_children("*", "MeshInstance3D", true, false):
+		_moldes.append(m as MeshInstance3D)
+
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	print("campo listo: %d mallas con colision, %s m" % [n, str(_aabb(_curso).size.round())])
@@ -118,6 +133,7 @@ func ir_a(i: int) -> void:
 	_labio = _bandera.y + ALTO_PLATAFORMA
 	_montar_copa()
 	_poblar_fauna()
+	_poblar_basura()
 
 
 func altura_terreno(x: float, z: float) -> float:
@@ -285,6 +301,48 @@ func _poblar_fauna() -> void:
 		add_child(nodo)
 		animales.append({"nodo": nodo, "dir": randf() * TAU, "t": randf() * 3.0,
 			"vivo": true, "color": col})
+
+
+## Siembra basura por el pasillo tee-bandera: es el camino que se recorre, asi
+## que se encuentra sin desviarse, pero repartida para que haya que buscarla.
+func _poblar_basura() -> void:
+	for b in basura:
+		if is_instance_valid(b):
+			b.queue_free()
+	basura.clear()
+	if _moldes.is_empty():
+		return
+	var a := Vector2(_tee.x, _tee.z)
+	var b := Vector2(_bandera.x, _bandera.z)
+	for i in BASURAS:
+		var p := a.lerp(b, randf_range(0.08, 0.95)) \
+			+ Vector2.from_angle(randf() * TAU) * randf_range(2.0, ANCHO_CALLE)
+		var molde: MeshInstance3D = _moldes.pick_random()
+		var caja: AABB = molde.mesh.get_aabb()
+		var malla: MeshInstance3D = molde.duplicate()
+		malla.position = -caja.get_center()   # el molde viene donde lo dejo el escaparate
+		var pieza := Node3D.new()
+		pieza.add_child(malla)
+		pieza.position = Vector3(p.x, altura_terreno(p.x, p.y) + caja.size.y * 0.5, p.y)
+		pieza.rotation.y = randf() * TAU
+		add_child(pieza)
+		basura.append(pieza)
+
+
+## Recoge lo que haya a tiro y devuelve cuantas piezas eran.
+func recoger(pos: Vector3, radio: float) -> int:
+	var n := 0
+	for i in range(basura.size() - 1, -1, -1):
+		var b: Node3D = basura[i]
+		if not is_instance_valid(b):
+			basura.remove_at(i)
+			continue
+		if b.global_position.distance_to(pos) < radio:
+			Util.reventar(self, b.global_position, Color(0.55, 0.85, 0.45), 10)
+			b.queue_free()
+			basura.remove_at(i)
+			n += 1
+	return n
 
 
 func choque(pos: Vector3, vel: Vector3) -> String:
