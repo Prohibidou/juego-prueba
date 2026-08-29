@@ -19,6 +19,7 @@ const AIRE_TIEMPO := 1.1    # segundos de timon por golpe
 # --- rodar el piche con el mando ---
 const CONDUCE_ACEL := 7.0   # m/s2 que mete el stick izquierdo
 const CONDUCE_MAX := 4.5    # m/s: es andar, no un golpe
+const GIRO_MAX := 9.0       # rad/s: por encima de esto la vuelta es un borron
 # --- puntos (SBG puntua, no cuenta golpes) ---
 const PUNTOS_HOYO := 100
 const PUNTOS_GOLPE := 25    # lo que vale cada golpe ahorrado sobre el par
@@ -44,6 +45,7 @@ var _desde := Vector3.ZERO
 var _ultimo := 0.0        # distancia del ultimo golpe, para el aviso
 var _diam_bola := 1.0     # tamano del modelo tal cual viene, en sus unidades
 var _caja_bola := AABB()
+var _giro_vista := Basis.IDENTITY
 var _aire := 0.0          # timon que le queda a este golpe
 var _marcas: Array = []
 
@@ -57,7 +59,6 @@ var entorno: WorldEnvironment
 var hud: Label
 var msg: Label
 var barra: ProgressBar
-var deslizador: VSlider
 
 
 func _ready() -> void:
@@ -151,6 +152,20 @@ func _crear_bola() -> void:
 	_escalar_vista(1.0)
 
 
+## El piche rueda sobre su eje al moverse. No sirve la vuelta del cuerpo
+## rigido: la esfera de colision son 2 cm y a 4 m/s giraria a 200 rad/s, un
+## borron. Se rueda como rodaria una bola del tamano DIBUJADO, con tope para
+## que a la velocidad de un drive siga leyendose.
+func _rodar(e: float, dt: float) -> Basis:
+	var plana := Vector3(bola.linear_velocity.x, 0.0, bola.linear_velocity.z)
+	var radio := _diam_bola * e * 0.5
+	if dt > 0.0 and plana.length() > 0.05 and radio > 0.0:
+		var w := minf(plana.length() / radio, GIRO_MAX)
+		_giro_vista = (Basis(Vector3.UP.cross(plana.normalized()), w * dt)
+			* _giro_vista).orthonormalized()
+	return _giro_vista
+
+
 ## Junta la caja de todas las mallas del modelo y les da algo de brillo: el
 ## .fbx las exporta con rugosidad 1, y sin un reflejo el piche vuelve a leerse
 ## como una silueta plana por muy bien iluminado que este.
@@ -177,10 +192,10 @@ func _preparar_modelo(raiz: Node3D) -> AABB:
 ## cambia con la vuelta que lleve. Se calcula la caja YA GIRADA y se apoya justo
 ## en el punto de contacto de la bola. Antes el levante iba en ejes de la bola y
 ## al rodar apuntaba hacia abajo: por eso se hundia en el mapa.
-func _escalar_vista(dist: float) -> void:
+func _escalar_vista(dist: float, dt := 0.0) -> void:
 	var alto := 2.0 * dist * tan(deg_to_rad(camara.fov) * 0.5)
 	var e := maxf(Util.RADIO * 2.0, VISTA_PANTALLA * alto) / _diam_bola
-	var base := bola.global_basis.scaled(Vector3.ONE * e)
+	var base := _rodar(e, dt).scaled(Vector3.ONE * e)
 	var caja := Transform3D(base, Vector3.ZERO) * _caja_bola
 	vista.global_transform = Transform3D(base, bola.global_position - Vector3(
 		caja.get_center().x, caja.position.y + Util.RADIO, caja.get_center().z))
@@ -206,18 +221,6 @@ func _crear_ui() -> void:
 	barra.custom_minimum_size = Vector2(320, 22)
 	barra.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 40)
 	capa.add_child(barra)
-
-	# el angulo es el control incomodo en tactil: un deslizador se ve y se toca
-	# con el pulgar izquierdo mientras el derecho carga
-	deslizador = VSlider.new()
-	deslizador.min_value = 5.0
-	deslizador.max_value = 55.0
-	deslizador.value = 22.0
-	deslizador.custom_minimum_size = Vector2(48, 220)
-	deslizador.set_anchors_and_offsets_preset(Control.PRESET_CENTER_LEFT,
-		Control.PRESET_MODE_MINSIZE, 24)
-	deslizador.value_changed.connect(func(v): golpe.loft = v)
-	capa.add_child(deslizador)
 
 	if DisplayServer.is_touchscreen_available():
 		var pegar := Button.new()
@@ -280,7 +283,8 @@ func _on_golpeado(velocidad: Vector3) -> void:
 	_desde = bola.global_position
 	_aire = AIRE_TIEMPO
 	_v_pendiente = velocidad
-	# mas loft, mas efecto hacia atras; y desde el rough la bola sale sin freno
+	# el angulo de salida ya es fijo, asi que el efecto sale casi constante; lo
+	# que si cambia es el rough, de donde la bola sale sin freno
 	var z := campo.zona(_desde.x, _desde.z)
 	_giro = clampf(velocidad.normalized().y * 2.2, 0.25, 1.0) * campo.retiene_efecto(z)
 
@@ -296,16 +300,13 @@ func _process(dt: float) -> void:
 	if golpe.activo and Input.is_key_pressed(KEY_R):
 		_drop()
 
-	if absf(deslizador.value - golpe.loft) > 0.1:
-		deslizador.set_value_no_signal(golpe.loft)
-
 	campo.mover_animales(dt, bola.global_position,
 		not quieto and bola.linear_velocity.length() > 10.0)
 
 	# Que la bola no se pierda de vista. Parada se dibuja a tamano real, que es
 	# cuando la camara esta encima y se vería un melon al lado del palo; en
 	# juego se agranda con la distancia, de modo que ocupa siempre lo mismo.
-	_escalar_vista(camara.global_position.distance_to(bola.global_position))
+	_escalar_vista(camara.global_position.distance_to(bola.global_position), dt)
 
 	barra.value = golpe.fuerza * 100.0
 	var p := bola.global_position
@@ -313,10 +314,10 @@ func _process(dt: float) -> void:
 	var dist := Vector2(p.x - b.x, p.z - b.z).length()
 	var v := campo.viento()
 	hud.text = ("Hoyo %d/%d | Par %d | Golpes %d | %d puntos | %d m al hoyo\n"
-		+ "Angulo %d deg | fuerza %d%% (%.0f m/s) +-%.1f deg | %s | viento %.0f m/s\n"
+		+ "Fuerza %d%% (%.0f m/s) +-%.1f deg | %s | viento %.0f m/s\n"
 		+ "Timon %s") % [
 		indice + 1, Campo.HOYOS.size(), campo.par(), golpes, total, roundi(dist),
-		roundi(golpe.loft), roundi(golpe.fuerza * 100), golpe.velocidad(),
+		roundi(golpe.fuerza * 100), golpe.velocidad(),
 		rad_to_deg(golpe.dispersion()),
 		campo.nombre_zona(campo.zona(p.x, p.z)), Vector2(v.x, v.z).length(),
 		"#".repeat(ceili(_aire / AIRE_TIEMPO * 10.0)) if _aire > 0.0 else "-"]
@@ -460,12 +461,18 @@ func _self_check() -> void:
 	assert(is_equal_approx(cerca, _diam_bola * vista.scale.x / 40.0),
 		"la bola no mantiene el tamano en pantalla")
 	# y apoyarse en el suelo con cualquier vuelta, que es lo que se hundia
-	bola.global_rotation = Vector3(1.1, 0.7, -0.4)
+	_giro_vista = Basis.from_euler(Vector3(1.1, 0.7, -0.4))
 	_escalar_vista(6.0)
 	var apoyo: AABB = vista.global_transform * _caja_bola
 	assert(absf(apoyo.position.y - (bola.global_position.y - Util.RADIO)) < 0.001,
 		"el piche no se apoya en el suelo al girar")
-	bola.global_rotation = Vector3.ZERO
+	_giro_vista = Basis.IDENTITY
+	# y rodar sobre su eje al moverse
+	bola.linear_velocity = Vector3(3.0, 0, 0)
+	_escalar_vista(6.0, 0.1)
+	assert(not _giro_vista.is_equal_approx(Basis.IDENTITY), "el piche no rueda")
+	bola.linear_velocity = Vector3.ZERO
+	_giro_vista = Basis.IDENTITY
 	print("modelo %s | caja %s | diametro %.2f u"
 		% [MODELO_BOLA.get_file(), str(_caja_bola), _diam_bola])
 	print("self-check OK | tee %s | bandera %s | %d m | par %d"

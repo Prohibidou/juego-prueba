@@ -11,8 +11,9 @@ const CARGA_POR_SEG := 0.5  # 2 s de barra entera: antes era 0.9 s y todo salia 
 # La distancia va con el CUADRADO de la velocidad, asi que una barra lineal se
 # siente "todo o nada". Con CURVA<1 la barra se lee casi como distancia.
 const CURVA := 0.75
-const LOFT_MIN := 5.0
-const LOFT_MAX := 55.0
+# Angulo de salida fijo: era un control (flechas, stick derecho y deslizador)
+# que se comia el arriba/abajo, y lo que se quiere ahi es mover al bicho.
+const LOFT := 22.0
 # Cuanto mas cargas, mas lejos llega y menos control tienes. Sin esto la barra
 # no era una decision: siempre convenia el maximo. Va con el CUADRADO de la
 # fuerza, asi que medio golpe es casi exacto y el drive completo es una apuesta.
@@ -47,14 +48,12 @@ const CAM_FOV_SUAVIZADO := 4.0 # el fov va mas lento que la posicion: asi se not
 # funciona solo, porque "ui_accept" incluye la A del mando por defecto.
 const ZONA_MUERTA := 0.2
 const APUNTA_GIRO := 1.6       # rad/s de mira con el stick derecho al tope
-const APUNTA_LOFT := 30.0      # grados/s de loft
 # -------------
 
 const LARGO_MIRA := 60.0    # metros de linea de apuntado
 const PASOS_MIRA := 30
 
 var mira := 0.0
-var loft := 22.0
 var fuerza := 0.0
 var activo := false
 var viento := Vector3.ZERO
@@ -88,7 +87,6 @@ func preparar(bola: RigidBody3D, camara: Camera3D) -> void:
 func reset(tee: Vector3, bandera: Vector3) -> void:
 	var d := bandera - tee
 	mira = atan2(d.x, d.z)
-	loft = 22.0
 	fuerza = 0.0
 	_cargando = false
 
@@ -112,7 +110,7 @@ func soltar() -> void:
 	# entiende que se le fue por cargar de mas, no que la mira mienta
 	var e := dispersion()
 	golpeado.emit(_dir(mira + randf_range(-e, e),
-		clampf(loft + rad_to_deg(randf_range(-e, e)), LOFT_MIN, LOFT_MAX)) * v)
+		LOFT + rad_to_deg(randf_range(-e, e))) * v)
 	fuerza = 0.0
 
 
@@ -122,7 +120,6 @@ func _unhandled_input(e: InputEvent) -> void:
 		return
 	if activo:
 		mira -= e.relative.x * 0.004
-		loft = clampf(loft + e.relative.y * 0.06, LOFT_MIN, LOFT_MAX)
 	else:
 		# el mismo gesto: con la bola en el aire el arrastre es el timon
 		_timon_tactil = clampf(_timon_tactil + e.relative.x * TIMON_TACTIL, -1.0, 1.0)
@@ -143,11 +140,7 @@ func _process(dt: float) -> void:
 		# izquierdo, que aqui rueda al piche. En mando se apunta con el derecho.
 		if Input.is_key_pressed(KEY_LEFT): mira += dt * 1.0
 		if Input.is_key_pressed(KEY_RIGHT): mira -= dt * 1.0
-		if Input.is_key_pressed(KEY_UP): loft = minf(LOFT_MAX, loft + dt * 25.0)
-		if Input.is_key_pressed(KEY_DOWN): loft = maxf(LOFT_MIN, loft - dt * 25.0)
-		var ap := _stick(JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y)
-		mira -= ap.x * dt * APUNTA_GIRO
-		loft = clampf(loft - ap.y * dt * APUNTA_LOFT, LOFT_MIN, LOFT_MAX)
+		mira -= _stick(JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y).x * dt * APUNTA_GIRO
 
 	_timon_tactil = move_toward(_timon_tactil, 0.0, dt * TIMON_VUELVE)
 	timon = 0.0 if activo else clampf(
@@ -164,10 +157,15 @@ func _stick(eje_x: int, eje_y: int) -> Vector2:
 	return Vector2.ZERO if v.length() < ZONA_MUERTA else v.limit_length(1.0)
 
 
-## Hacia donde empuja el stick izquierdo, girado a la camara y aplanado. Lo usa
-## juego.gd para rodar el piche; el largo del vector es cuanto se inclina.
+## Hacia donde se empuja al bicho: stick izquierdo o WASD, lo que se toque.
+## Girado a la camara y aplanado. El largo del vector es cuanto se inclina.
 func mando() -> Vector3:
 	var v := _stick(JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y)
+	if v == Vector2.ZERO:
+		v = Vector2(
+			float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A)),
+			float(Input.is_key_pressed(KEY_S)) - float(Input.is_key_pressed(KEY_W))
+		).limit_length(1.0)
 	if v == Vector2.ZERO:
 		return Vector3.ZERO
 	var b := _camara.global_basis
@@ -177,7 +175,7 @@ func mando() -> Vector3:
 
 
 func direccion() -> Vector3:
-	return _dir(mira, loft)
+	return _dir(mira, LOFT)
 
 
 func _dir(m: float, l: float) -> Vector3:
