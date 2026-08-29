@@ -30,15 +30,15 @@ const CONDUCE_MAX := 4.5    # m/s: es andar, no un golpe
 const GIRO_MAX := 9.0       # rad/s: por encima de esto la vuelta es un borron
 # --- stamina y correa ---
 # Andar es gratis pero solo alrededor de donde caiste; para ir mas lejos hay
-# que saltar, y saltar cuesta stamina. La basura del campo la repone: es lo que
-# obliga a desviarse de la linea recta al hoyo.
+# que saltar. El salto no gasta stamina, solo el impulso (G) la consume. La
+# basura del campo la repone: es lo que obliga a desviarse de la linea recta
+# al hoyo.
 const RADIO_ANDAR := 5.0
 const PASOS_LIMITE := 32      # puntos por anillo del suelo pintado
 const ANILLOS := 3            # anillos concentricos: mas, mejor se pega al relieve
 const STAMINA_MAX := 100.0
 const STAMINA_BASURA := 20.0
 const STAMINA_IMPULSO := 60.0 # lo que cuesta el impulso (G) a barra llena
-const STAMINA_SALTO := 15.0   # lo que cuesta el salto (espacio)
 const IMPULSO_SALTO := 5.5    # m/s hacia arriba, sin tocar lo que ya lleve
 # Por debajo de esto no hay impulso: ni barra, ni golpe minimo. Es el mismo
 # numero que pinta de rojo la barra, para que lo que se ve y lo que se puede
@@ -825,17 +825,17 @@ func _conducir() -> void:
 ## ponytail: mover un cuerpo rigido a mano fuera de _integrate_forces no es lo
 ## fino, pero aqui son centimetros y solo en el borde. Si diera guerra, lo suyo
 ## seria un muro de colision cilindrico que se mueve con el ancla.
-## El salto (espacio) despega con lo que ya lleve encima y sirve para salir del
-## area: mientras esta en el aire no hay correa, y al caer se ancla donde quede.
+## El salto (espacio) despega con lo que ya lleve encima, pero no desbloquea el
+## area: la correa sigue tirando aunque este en el aire, asi que solo el
+## impulso (G) saca de verdad del circulo.
 ##
 ## No toca `quieto`. Sacar la bola de ese estado la metia por el camino del
 ## golpe: la camara se iba atras, el area desaparecia y al caer salia el aviso
 ## de distancia. O sea que un brinco se veia igual que un impulso y cortaba el
 ## juego. Aqui se sigue andando, solo que por el aire.
 func _saltar() -> void:
-	if _saltando or not (listo and quieto and not embocada) or stamina < STAMINA_SALTO:
+	if _saltando or not (listo and quieto and not embocada):
 		return
-	stamina -= STAMINA_SALTO
 	_saltando = true
 	bola.freeze = false      # congelada no admite ni fuerzas ni velocidad
 	bola.linear_velocity += Vector3.UP * IMPULSO_SALTO
@@ -923,13 +923,14 @@ func _cine_portazo() -> void:
 	golpe.fin_cine()
 
 
-## Cierra el brinco al tocar suelo bajando, y ancla el area donde haya caido.
+## Cierra el brinco al tocar suelo bajando. No reancla: si lo hiciera, saltar
+## una y otra vez correria el circulo poco a poco sin gastar el impulso, y el
+## salto se convertiria en la forma real de desbloquear el area.
 func _aterrizar() -> void:
 	var p := bola.global_position
 	if bola.linear_velocity.y > 0.0 or p.y > campo.altura_terreno(p.x, p.z) + Util.RADIO + 0.06:
 		return
 	_saltando = false
-	_anclar()
 
 
 ## La puerta sigue en pie: la salida esta tapada.
@@ -949,9 +950,8 @@ func _en_la_jaula() -> bool:
 
 
 func _atar() -> void:
-	# brincar es como se sale del area; de la jaula sacan los muros, no esto
-	if _saltando:
-		return
+	# tambien tira en pleno brinco: saltar no es forma de salir del area, solo
+	# el impulso (G) lo es. De la jaula sacan los muros, no esto.
 	var d := Vector2(bola.global_position.x - _ancla.x,
 		bola.global_position.z - _ancla.z)
 	if d.length() <= RADIO_ANDAR:
@@ -1153,14 +1153,22 @@ func _self_check() -> void:
 	assert(_v_pendiente == Vector3.ZERO, "salio impulso sin stamina")
 	stamina = stamina_previa
 	golpe.puede_saltar = true
-	# el salto despega, cobra, y no saca a la bola del estado de andar: si lo
-	# hiciera, un brinco se veria como un impulso
+	# el salto despega gratis (no gasta stamina) y no saca a la bola del
+	# estado de andar: si lo hiciera, un brinco se veria como un impulso
 	var stamina_salto := stamina
 	_saltar()
 	assert(bola.linear_velocity.y > 0.0, "el salto no despega")
-	assert(stamina == stamina_salto - STAMINA_SALTO, "el salto no cobra stamina")
+	assert(stamina == stamina_salto, "el salto gasta stamina")
 	assert(quieto and golpe.activo, "el salto corta el estado de andar")
-	assert(_saltando, "el salto no levanta la correa")
+	assert(_saltando, "el salto no queda marcado como brinco")
+	# y en pleno brinco la correa sigue tirando: solo el impulso desbloquea
+	bola.global_position = vuelve + Vector3(RADIO_ANDAR * 3.0, 0, 0)
+	bola.linear_velocity = Vector3(9.0, 0, 0)
+	_atar()
+	assert(Vector2(bola.global_position.x - _ancla.x,
+		bola.global_position.z - _ancla.z).length() <= RADIO_ANDAR + 0.001,
+		"el salto se sale de la correa")
+	bola.global_position = vuelve
 	bola.linear_velocity = Vector3.ZERO
 	bola.freeze = true
 	_saltando = false
