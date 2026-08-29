@@ -79,6 +79,8 @@ var viento := Vector3.ZERO
 var estabilidad := 1.0       # 1 en calle, menos en rough: alli se controla peor
 var tope := 1.0              # cuanta barra deja cargar la stamina; lo pone juego.gd
 var enjaulado := false       # la camara se aparta para que se vea la jaula
+var cine := false            # plano de cine: manda sobre todo lo demas
+var cine_offset := Vector3.ZERO   # desde donde se mira, RELATIVO a la bola
 var puede_saltar := true     # sin stamina no hay impulso; lo pone juego.gd
 var timon := 0.0             # -1..1 para dirigir en el aire; lo lee juego.gd
 var suelo: Callable          # (x, z) -> altura del terreno
@@ -249,6 +251,12 @@ func _girar_hacia(actual: Vector3, objetivo: Vector3, max_rad: float) -> Vector3
 ## el piche vuela o rueda solo tras un golpe (activo=false, el jugador no
 ## esta manejando la caida) la camara persigue el rumbo real de la bola.
 func objetivo_camara(dt := 0.0) -> Vector3:
+	if cine:
+		# de costado y pegado a la bola. Fijo en el suelo no vale: a 26 m/s el
+		# piche se iba de cuadro en un pestaneo aunque el tiempo vaya al 25%.
+		# Y como el suavizado va con delta, en camara lenta la camara se queda
+		# atras a proposito: la jaula y la puerta se alejan en el encuadre.
+		return _bola.global_position + cine_offset
 	if activo:
 		var atras := CAM_ATRAS_JAULA if enjaulado else CAM_ATRAS_TIRO
 		var alto := CAM_ALTO_JAULA if enjaulado else CAM_ALTO
@@ -278,12 +286,30 @@ func _paso(k: float, dt: float) -> float:
 ## piche fuera de cuadro. Volando o rodando sola tras un golpe, se mira a
 ## ella misma.
 func _mirada_deseada() -> Vector3:
+	if cine:
+		return _bola.global_position
 	if activo:
 		var dir := Vector3(sin(mira), 0, cos(mira))
 		# enjaulado se mira mas cerca: adelantar 5 m saca la jaula de cuadro
 		var lejos := 1.5 if enjaulado else 5.0
 		return _bola.global_position + dir * lejos + Vector3.UP * 0.5
 	return _bola.global_position
+
+
+## Corta a un plano que acompana a la bola. Corta, no viaja: el suavizado
+## normal va con delta, y en camara lenta tardaria una eternidad en llegar.
+func cortar_a(desvio: Vector3) -> void:
+	cine = true
+	cine_offset = desvio
+	_camara.global_position = _bola.global_position + desvio
+	_mirada = _bola.global_position
+	_camara.look_at(_mirada)
+
+
+## Se acaba el plano: la camara vuelve sola a su sitio con el suavizado de
+## siempre, que a velocidad normal es un tercio de segundo.
+func fin_cine() -> void:
+	cine = false
 
 
 func encuadrar() -> void:

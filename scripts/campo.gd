@@ -136,11 +136,15 @@ func ir_a(i: int) -> void:
 	_poblar_basura()
 
 
-func altura_terreno(x: float, z: float) -> float:
+## `techo` es desde donde cae el rayo. Por defecto desde muy arriba, que es lo
+## que hace falta para colocar cosas a ciegas; pero el rayo para en la PRIMERA
+## colision, y bajo un arbol esa es la copa, no el suelo. Quien ya sabe mas o
+## menos a que altura esta lo que busca puede bajar el techo y saltarselas.
+func altura_terreno(x: float, z: float, techo := TECHO) -> float:
 	var esp := get_world_3d().direct_space_state
 	if esp == null:
 		return 0.0
-	var q := PhysicsRayQueryParameters3D.create(Vector3(x, TECHO, z), Vector3(x, SUELO, z))
+	var q := PhysicsRayQueryParameters3D.create(Vector3(x, techo, z), Vector3(x, SUELO, z))
 	q.exclude = excluir
 	var golpe := esp.intersect_ray(q)
 	return golpe["position"].y if golpe else _bandera.y

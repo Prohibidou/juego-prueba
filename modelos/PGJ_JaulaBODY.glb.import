@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://ccp1eu00cbjck"
-path="res://.godot/imported/PGJ_Jaulav04.glb-cd0dfbfa2e9559965a11f4b221e68d5b.scn"
+uid="uid://bygilsje8ykww"
+path="res://.godot/imported/PGJ_JaulaBODY.glb-32e20b89d809e2702274acc1e782bf0d.scn"
 
 [deps]
 
-source_file="res://modelos/PGJ_Jaulav04.glb"
-dest_files=["res://.godot/imported/PGJ_Jaulav04.glb-cd0dfbfa2e9559965a11f4b221e68d5b.scn"]
+source_file="res://modelos/PGJ_JaulaBODY.glb"
+dest_files=["res://.godot/imported/PGJ_JaulaBODY.glb-32e20b89d809e2702274acc1e782bf0d.scn"]
 
 [params]
 
