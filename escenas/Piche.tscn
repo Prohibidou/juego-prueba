@@ -1,0 +1,47 @@
+[gd_scene format=3 uid="uid://nv4bpr3ue734"]
+
+[ext_resource type="PackedScene" uid="uid://dgxdb7x06vb23" path="res://modelos/PicheLowHighTest07.fbx" id="1_ubphf"]
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_cqm7f"]
+bounce = 0.5
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_w6coe"]
+radius = 0.0213
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_3cu3f"]
+specular_mode = 2
+albedo_color = Color(1, 1, 1, 0.5)
+
+[sub_resource type="SphereMesh" id="SphereMesh_25xmk"]
+radius = 0.06
+height = 0.12
+radial_segments = 4
+rings = 2
+
+[node name="Piche" type="RigidBody3D" unique_id=2077429810]
+mass = 0.0459
+physics_material_override = SubResource("PhysicsMaterial_cqm7f")
+freeze = true
+continuous_cd = true
+contact_monitor = true
+max_contacts_reported = 4
+
+[node name="Colision" type="CollisionShape3D" parent="." unique_id=1319996276]
+shape = SubResource("SphereShape3D_w6coe")
+
+[node name="Estela" type="CPUParticles3D" parent="." unique_id=262928287]
+material_override = SubResource("StandardMaterial3D_3cu3f")
+emitting = false
+amount = 20
+lifetime = 0.4
+explosiveness = 0.9
+mesh = SubResource("SphereMesh_25xmk")
+spread = 60.0
+gravity = Vector3(0, -9, 0)
+initial_velocity_min = 1.0
+initial_velocity_max = 4.0
+scale_amount_min = 0.5
+scale_amount_max = 1.5
+
+[node name="Vista" type="Node3D" parent="." unique_id=1896370223 instance=ExtResource("1_ubphf")]
+top_level = true

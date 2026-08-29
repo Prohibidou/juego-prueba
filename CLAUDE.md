@@ -21,8 +21,11 @@ piche y la intro:
 
 ```
 "/c/Users/ivanu/Downloads/Godot_v4.6.3-stable_win64.exe/Godot_v4.6.3-stable_win64.exe" \
-  --headless --path . --quit-after 4500
+  --headless --path . res://escenas/Juego.tscn --quit-after 4500
 ```
+
+La escena principal del proyecto es `Menu.tscn`, que no carga nada: sin nombrar
+`Juego.tscn` la corrida se queda en la portada y no ejecuta un solo assert.
 
 Los asserts imprimen numeros (`la bola queda en x=0.81`), no solo pasan o fallan.
 Si tocas algo que ya tiene assert, el numero tiene que seguir teniendo sentido.
@@ -38,16 +41,22 @@ mueve no cambian.
 Terminar, verificar y parar. Ofrecerlo en una linea, no ejecutarlo.
 
 **IMPORTANTE: las escenas se autoran en el editor, no se construyen en `_ready`.**
-Este proyecto arrastra el error contrario: 47 nodos creados con `.new()` y tres
-`.tscn` que son cascaras vacias de un `Node3D` con un script. Eso cuesta caro:
-no se puede arrastrar nada en el editor, el Inspector no sirve, los `@export` no
-se pueden editar porque las instancias las crea el codigo, y F6 sobre una escena
-no muestra nada. Colocar la jaula en la caja de la camioneta fueron cuatro
-rondas de constante -> correr -> captura -> corregir; en el editor eran diez
-segundos. Lo que va en el editor: composicion fija (camara, luz, entorno, UI,
-modelos colocados unos sobre otros). Lo que va en codigo: solo lo procedural,
-que depende de datos que no existen hasta correr (altura del terreno, posicion
-del tee, sembrado aleatorio).
+Lo que va en el editor: composicion fija (camara, luz, entorno, UI, modelos
+colocados unos sobre otros). Lo que va en codigo: solo lo procedural, que
+depende de datos que no existen hasta correr (altura del terreno, sembrado
+aleatorio). Costo aprendido: colocar la jaula en la caja de la camioneta fueron
+cuatro rondas de constante -> correr -> captura -> corregir; en el editor eran
+diez segundos. Y el tee estuvo clavado como `Vector2(1020.0, 821.3)` con ocho
+lineas de comentario explicando como se palpo a rayos: hoy es un `Marker3D` que
+se arrastra.
+
+El proyecto ya paso por esa migracion: camara, sol, entorno, UI, portada, el
+piche y el campo estan en `.tscn`. Los `.new()` que quedan son legitimos
+(`SurfaceTool`, `ImmediateMesh`, materiales, particulas, `InputEventKey`). Si
+vuelve a aparecer un `.new()` de un nodo que existe siempre, esta mal.
+
+Para autorar con el MCP hay skill: `/godot-escena`. Para verificar,
+`/godot-verificar`.
 
 No verificar solo con asserts. Los asserts confirman que el codigo CORRE, no que
 se VEA. En esta sesion pasaron todos mientras la pantalla estaba entera roja, la
@@ -55,7 +64,7 @@ camara dentro de un arbol y el pateador a 500 m de su propia area de deteccion.
 
 Una escena no depende de nada de fuera: se monta sola y avisa con senales. Nada
 de `get_node("..")` al padre. Senales hacia arriba, llamadas hacia abajo.
-(Ver `scripts/pateador.gd`, que es el unico que ya lo cumple.)
+(Ver `escenas/Jaula.tscn` + `scripts/jaula.gd`.)
 
 Toda logica no trivial deja un assert en `_self_check()`. Y el assert tiene que
 poder fallar: si empujas la bola a mano mientras `_conducir()` la congela cada
@@ -104,17 +113,30 @@ que durar en tiempo REAL necesitan `ignore_time_scale`.
 Forzando solo la horizontal, la gravedad se come el ascenso: el impulso pasaba
 de 26 m a 6.
 
+**No todo numero que imprime un assert sirve como senal de regresion.** El del
+primer impulso (`la bola sale a X m de la jaula`) oscila entre 1.6 y 18.7 con el
+mismo codigo: la dispersion decide si el piche cruza el hueco de la puerta o
+rebota en el marco. Antes de perseguir una regresion por un numero, correr la
+misma version dos o tres veces.
+
 **Las banderas que se ponen en `_process` se quedan pegadas si algo corta antes
 con un `return`.** El area quedo blanca tapando la camioneta y la linea de mira
 cruzando el encuadre, las dos por eso.
 
 ## Mapa del codigo
 
+- `escenas/Juego.tscn` — la escena del juego: `Camara`, `Sol`, `Entorno`, `UI`,
+  `Portada`, `Golpe`, y las instancias `Campo` y `Piche`. Aca se tunea lo visual.
+- `escenas/Campo.tscn` — el glb del muelle ya recentrado, mas los `Marker3D`
+  `Tee` y `Bandera`. Mover el tee es arrastrar el marcador.
+- `escenas/Piche.tscn` — el cuerpo rigido, su esfera de colision, el modelo y la
+  estela.
+- `escenas/piezas/` — `Bandera.tscn` y `Animal.tscn`, placeholders pensados para
+  cambiarse por el modelo bueno arrastrandolo encima.
 - `scripts/juego.gd` — reglas, marcador, intro, jaula, cinematica, area. Es el
-  monolito: ~1400 lineas. Lo que salga de aca deberia salir como escena.
+  monolito: ~840 lineas. Lo que salga de aca deberia salir como escena.
 - `scripts/campo.gd` — el campo, alturas por rayo, zonas, y el sembrado de
-  fauna, basura y pateadores.
+  fauna y basura.
 - `scripts/golpe.gd` — apuntado, potencia, mando y camara.
 - `scripts/util.gd` — aerodinamica y mallas provisionales.
-- `scripts/pateador.gd` + `escenas/Pateador.tscn` — el unico modulo con escena
-  propia y sin dependencias.
+- `scripts/jaula.gd` + `escenas/Jaula.tscn` — la jaula de salida, con su puerta.

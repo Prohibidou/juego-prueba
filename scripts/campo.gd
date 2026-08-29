@@ -11,8 +11,6 @@ class_name Campo
 ## herramientas/VerMapa.tscn. Para mover un tee o una bandera, se toca esta
 ## tabla y se vuelve a mirar el render.
 
-const CURSO := "res://resources-3d/PGJ_MAPA_MUELLE_v1.glb"
-const ESCALA := 1.0     # este ya viene en metros reales, no en escala Sketchfab
 # La foto aerea del campo viejo venia con la luz horneada y habia que
 # desactivarle el sombreado (si no, los arboles salian casi negros). El
 # muelle es un modelo normal con sus propios mapas de normal: sombrearlo es
@@ -32,7 +30,11 @@ const R_PLATAFORMA := 3.0
 const ALTO_PLATAFORMA := 0.15  # la plataforma del hoyo se levanta sobre el
 							   # terreno: sin eso la copa quedaria enterrada en
 							   # la malla y la bola no podria bajar del labio
-const ALTO_MASTIL := 2.13
+# Piezas provisionales: son escenas para poder cambiarlas por el modelo bueno
+# arrastrandolo encima, cosa que con un MeshInstance3D hecho a mano no se puede.
+const BANDERA := "res://escenas/piezas/Bandera.tscn"
+const ANIMAL := "res://escenas/piezas/Animal.tscn"
+const COLOR_ANIMAL := Color(0.85, 0.82, 0.78)   # para el reventon al aturdirlo
 const R_GREEN := 14.0
 const ANCHO_CALLE := 22.0
 
@@ -48,15 +50,7 @@ const ZONA_GREEN := 3
 const NOMBRE_ZONA := {0: "rough", 1: "calle", 3: "green"}
 
 const HOYOS := [
-	# el marcador "jaula" del glb cae justo sobre un hueco del casco (el rayo
-	# de altura lo atraviesa y pega abajo, en el mar): la jaula quedaba
-	# metida dentro del barco. Esta posicion es una meseta de la cubierta de
-	# verdad: se palpo a rayos que fuera plana Y que hubiera sitio detras
-	# para la camara (CAM_ATRAS_JAULA) sin chocar contra la caseta -el rincon
-	# de al lado se veia bien en la altura pero la camara quedaba pegada a
-	# una pared a 1.75 m, mirando el techo de la jaula de cerca.
-	{"par": 4, "tee": Vector2(1020.0, 821.3), "bandera": Vector2(994.03, 604.31),
-	 "viento": Vector3(1.0, 0, -0.5)},
+	{"par": 4, "viento": Vector3(1.0, 0, -0.5)},
 ]
 
 var indice := 0
@@ -76,22 +70,24 @@ var _moldes: Array[MeshInstance3D] = []
 ## Monta el campo. Hay que esperarlo: la colision no existe hasta que la fisica
 ## ha corrido un fotograma, y sin ella los rayos de altura no devuelven nada.
 func preparar() -> void:
-	_curso = load(CURSO).instantiate()
-	add_child(_curso)
-	_curso.scale = Vector3.ONE * ESCALA
-	await get_tree().process_frame
+	# El mapa esta instanciado y recentrado en Campo.tscn (esquina del campo en
+	# el origen): moverlo, escalarlo o cambiarlo se hace ahi, arrastrando.
+	_curso = $Curso
 
 	# el marcador "jaula" que trae el modelo es solo para saber donde va el
 	# tee: la jaula de verdad (con puerta y todo) la arma _montar_jaula() en
-	# juego.gd. Dejar el marcador metia una caja solida encima del spawn.
+	# juego.gd. Dejarlo metia una caja solida encima del spawn. Se cae aca
+	# porque un nodo de dentro de una instancia no se puede borrar en el editor.
 	var marcador := _curso.find_child("jaula", true, false)
 	if marcador:
 		marcador.queue_free()
+	await get_tree().process_frame   # que el marcador se haya ido antes de colisionar
 
-	var caja := _aabb(_curso)
-	_curso.position -= caja.position   # esquina del campo en el origen
-	await get_tree().process_frame
-
+	# ponytail: la colision se genera en cada arranque y son varios segundos
+	# (por eso hay portada de carga). El techo se sube pasando las formas al
+	# importador del glb (_subresources/generate/physics), pero el casco del
+	# barco esta afinado a mano aca abajo y el importador no expone esos
+	# ajustes: mover eso es una sesion entera, no un renglon.
 	var n := 0
 	for m: MeshInstance3D in _mallas(_curso):
 		if m.name == "Barco":
@@ -159,11 +155,15 @@ func labio_copa() -> float:
 ## Cambia de hoyo: recoloca tee, bandera y copa. El campo no se recarga.
 func ir_a(i: int) -> void:
 	indice = i
-	var h: Dictionary = HOYOS[i]
-	var t: Vector2 = h["tee"]
-	var b: Vector2 = h["bandera"]
-	_tee = Vector3(t.x, altura_suelo(t.x, t.y), t.y)
-	_bandera = Vector3(b.x, altura_suelo(b.x, b.y), b.y)
+	# Tee y Bandera son marcadores de Campo.tscn: se arrastran en el editor.
+	# De ellos se usa solo el plano; la altura la pone el rayo al suelo. El tee
+	# NO va donde el glb pone su marcador "jaula" -ese cae sobre un hueco del
+	# casco y la jaula quedaba dentro del barco-, sino en una meseta de la
+	# cubierta con sitio detras para la camara.
+	var t: Vector3 = $Tee.position
+	var b: Vector3 = $Bandera.position
+	_tee = Vector3(t.x, altura_suelo(t.x, t.z), t.z)
+	_bandera = Vector3(b.x, altura_suelo(b.x, b.z), b.z)
 	_labio = _bandera.y + ALTO_PLATAFORMA
 	_montar_copa()
 	_poblar_fauna()
@@ -304,19 +304,9 @@ func _montar_copa() -> void:
 	cuerpo.add_child(cs)
 	_copa.add_child(cuerpo)
 
-	var mastil := Util.cilindro(0.008, 0.008, ALTO_MASTIL, Color(0.95, 0.95, 0.95), 8)
-	mastil.position = Vector3(_bandera.x, _labio + ALTO_MASTIL / 2.0, _bandera.z)
-	_copa.add_child(mastil)
-
-	var tela := MeshInstance3D.new()
-	var quad := QuadMesh.new()
-	quad.size = Vector2(0.42, 0.28)
-	tela.mesh = quad
-	var m := Util.mat(Color(0.95, 0.12, 0.12))
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	tela.material_override = m
-	tela.position = Vector3(_bandera.x + 0.21, _labio + ALTO_MASTIL - 0.2, _bandera.z)
-	_copa.add_child(tela)
+	var bandera := (load(BANDERA) as PackedScene).instantiate()
+	bandera.position = Vector3(_bandera.x, _labio, _bandera.z)
+	_copa.add_child(bandera)
 
 
 func _punto(c: Vector2, ang: float, r: float) -> Vector3:
@@ -333,37 +323,16 @@ func _poblar_fauna() -> void:
 		if is_instance_valid(a["nodo"]):
 			a["nodo"].queue_free()
 	animales.clear()
-	var col := Color(0.85, 0.82, 0.78)
 	var medio := (Vector2(_tee.x, _tee.z) + Vector2(_bandera.x, _bandera.z)) * 0.5
 	for n in 6:
 		var p := medio + Vector2(randf_range(-60, 60), randf_range(-60, 60))
 		if p.distance_to(Vector2(_tee.x, _tee.z)) < 35.0:
 			continue
-		var nodo := Node3D.new()
-		var cuerpo := MeshInstance3D.new()
-		var cap := CapsuleMesh.new()
-		cap.radius = 0.22
-		cap.height = 0.7
-		cap.radial_segments = 7
-		cuerpo.mesh = cap
-		cuerpo.material_override = Util.mat(col)
-		cuerpo.rotation.x = PI / 2.0
-		cuerpo.position.y = 0.28
-		nodo.add_child(cuerpo)
-		var cabeza := MeshInstance3D.new()
-		var sm := SphereMesh.new()
-		sm.radius = 0.16
-		sm.height = 0.32
-		sm.radial_segments = 7
-		sm.rings = 4
-		cabeza.mesh = sm
-		cabeza.material_override = Util.mat(col.lightened(0.1))
-		cabeza.position = Vector3(0, 0.48, -0.3)
-		nodo.add_child(cabeza)
+		var nodo := (load(ANIMAL) as PackedScene).instantiate()
 		nodo.position = Vector3(p.x, altura_suelo(p.x, p.y), p.y)
 		add_child(nodo)
 		animales.append({"nodo": nodo, "dir": randf() * TAU, "t": randf() * 3.0,
-			"vivo": true, "color": col})
+			"vivo": true, "color": COLOR_ANIMAL})
 
 
 ## Siembra basura por el pasillo tee-bandera: es el camino que se recorre, asi

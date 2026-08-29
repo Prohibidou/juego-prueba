@@ -1,0 +1,32 @@
+[gd_scene format=3 uid="uid://ou1govapn50m"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_qg3dt"]
+specular_mode = 2
+albedo_color = Color(0.85, 0.82, 0.78, 1)
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_kv7tg"]
+radius = 0.22
+height = 0.7
+radial_segments = 7
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_t0eqk"]
+specular_mode = 2
+albedo_color = Color(0.865, 0.838, 0.802, 1)
+
+[sub_resource type="SphereMesh" id="SphereMesh_iwon4"]
+radius = 0.16
+height = 0.32
+radial_segments = 7
+rings = 4
+
+[node name="Animal" type="Node3D" unique_id=1590397814]
+
+[node name="Cuerpo" type="MeshInstance3D" parent="." unique_id=220903966]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, -1, 0, 1, -4.371139e-08, 0, 0.28, 0)
+material_override = SubResource("StandardMaterial3D_qg3dt")
+mesh = SubResource("CapsuleMesh_kv7tg")
+
+[node name="Cabeza" type="MeshInstance3D" parent="." unique_id=1587349024]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.48, -0.3)
+material_override = SubResource("StandardMaterial3D_t0eqk")
+mesh = SubResource("SphereMesh_iwon4")

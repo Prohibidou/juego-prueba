@@ -47,7 +47,6 @@ const PUNTOS_GOLPE := 25    # lo que vale cada golpe ahorrado sobre el par
 # A escala real la bola son 4 cm: a 20 m ya no se ve. Se dibuja agrandada de
 # modo que ocupe SIEMPRE la misma fraccion de la pantalla, calculada con el fov
 # y la distancia reales de la camara. La colision sigue siendo la esfera de 4 cm.
-const MODELO_BOLA := "res://modelos/PicheLowHighTest07.fbx"
 # La jaula arranca cerrada en el tee y la puerta se cae al primer impulso. En
 # el modelo la puerta esta en la cara +X del nodo raiz, asi que la jaula se
 # gira para que esa cara mire a la bandera y el piche salga hacia el hoyo.
@@ -111,7 +110,7 @@ var _diam_bola := 1.0     # tamano del modelo tal cual viene, en sus unidades
 var _caja_bola := AABB()
 var stamina := STAMINA_MAX
 var _jaula: Node3D            # escenas/Jaula.tscn
-var _portada: CanvasLayer
+@onready var _portada: CanvasLayer = $Portada
 var _t_arranque := 0
 var _empujando := false       # el piche esta abriendo la puerta a empujones
 var _portazo := 1.0           # que fraccion de su velocidad lleva mientras
@@ -126,66 +125,29 @@ var _mira_rueda := 0.0                   # ultima mira vista, para girar en el s
 var _aire := 0.0          # timon que le queda a este golpe
 var _marcas: Array = []
 
-var campo: Campo
-var bola: RigidBody3D
-var vista: Node3D
-var estela: CPUParticles3D
-var camara: Camera3D
-var golpe: Node3D
-var entorno: WorldEnvironment
-var hud: Label
-var msg: Label
-var barra: ProgressBar
-var barra_stam: ProgressBar
+@onready var campo: Campo = $Campo
+@onready var bola: RigidBody3D = $Piche
+@onready var vista: Node3D = $Piche/Vista
+@onready var estela: CPUParticles3D = $Piche/Estela
+@onready var camara: Camera3D = $Camara
+@onready var golpe: Node3D = $Golpe
+@onready var entorno: WorldEnvironment = $Entorno
+@onready var hud: Label = $UI/Hud
+@onready var msg: Label = $UI/Msg
+@onready var barra: ProgressBar = $UI/Barra
+@onready var barra_stam: ProgressBar = $UI/BarraStam
 
 
 func _ready() -> void:
 	randomize()
 	_t_arranque = Time.get_ticks_msec()
-	_crear_portada()
-	camara = Camera3D.new()
-	camara.fov = 62.0
-	camara.far = 4000.0
-	add_child(camara)
+	_preparar_bola()
+	_conectar_tactil()
+	barra_stam.max_value = STAMINA_MAX   # el .tscn no puede leer la constante
 
-	var sol := DirectionalLight3D.new()
-	sol.rotation_degrees = Vector3(-48, -35, 0)
-	sol.light_energy = 1.35
-	sol.shadow_enabled = true
-	sol.directional_shadow_max_distance = 300.0
-	add_child(sol)
-
-	var cielo_mat := ProceduralSkyMaterial.new()
-	cielo_mat.sky_top_color = Color(0.32, 0.55, 0.90)
-	cielo_mat.sky_horizon_color = Color(0.78, 0.87, 0.95)
-	cielo_mat.ground_horizon_color = Color(0.78, 0.87, 0.95)
-	cielo_mat.sun_angle_max = 12.0
-	var cielo := Sky.new()
-	cielo.sky_material = cielo_mat
-	entorno = WorldEnvironment.new()
-	var env := Environment.new()
-	env.background_mode = Environment.BG_SKY
-	env.sky = cielo
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	# con 0.9 el relleno del cielo tapaba la sombra propia y el piche se veia
-	# como una silueta plana; a 0.5 el sol vuelve a modelar el volumen
-	env.ambient_light_energy = 0.5
-	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.fog_enabled = true
-	env.fog_density = 0.0008
-	env.fog_light_color = Color(0.78, 0.87, 0.95)
-	entorno.environment = env
-	add_child(entorno)
-
-	_crear_bola()
-	_crear_ui()
-
-	golpe = $Golpe
 	golpe.preparar(bola, camara)
 	golpe.golpeado.connect(_on_golpeado)
 
-	campo = Campo.new()
-	add_child(campo)
 	campo.excluir = [bola.get_rid()]
 	golpe.campo = campo   # para que el rayo de colision de la camara no pise la jaula
 	msg.text = "Cargando el campo..."
@@ -199,18 +161,6 @@ func _ready() -> void:
 	await _quitar_portada()
 
 
-func _crear_portada() -> void:
-	_portada = CanvasLayer.new()
-	_portada.layer = 100
-	var img := TextureRect.new()
-	img.texture = load(PORTADA)
-	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	img.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_portada.add_child(img)
-	add_child(_portada)
-
-
 ## Se va cuando el mapa esta listo Y han pasado CARGA_MIN segundos: si la
 ## maquina carga rapido, la portada igual se ve el rato que tiene que verse.
 func _quitar_portada() -> void:
@@ -218,42 +168,19 @@ func _quitar_portada() -> void:
 	if lleva < CARGA_MIN:
 		await get_tree().create_timer(CARGA_MIN - lleva).timeout
 	var t := create_tween()
-	t.tween_property(_portada.get_child(0), "modulate:a", 0.0, 0.5)
+	t.tween_property($Portada/Imagen, "modulate:a", 0.0, 0.5)
 	t.tween_callback(_portada.queue_free)
 
 
-func _crear_bola() -> void:
-	bola = RigidBody3D.new()
-	bola.mass = Util.MASA
-	bola.physics_material_override = Util.fisica()
-	bola.continuous_cd = true
-	bola.contact_monitor = true      # para saber cuando le pega a la puerta
-	bola.max_contacts_reported = 4
-	bola.freeze = true
-	var col := CollisionShape3D.new()
-	var esf := SphereShape3D.new()
-	esf.radius = Util.RADIO
-	col.shape = esf
-	bola.add_child(col)
-
-	# el .fbx es una escena entera (cuerpo, garras y ojos, cada uno con su
-	# material) y trae animaciones sueltas de Blender: una camara y unas cajas
-	# que, si alguna arrancara, moverian el modelo. Fuera.
-	vista = (load(MODELO_BOLA) as PackedScene).instantiate()
+## El piche esta en Piche.tscn. Aca queda solo lo que un .tscn no guarda: el
+## .fbx trae animaciones sueltas de Blender (una camara y unas cajas) que, si
+## alguna arrancara, moverian el modelo -y no se pueden borrar de una instancia
+## desde el editor-; y la escala de la vista, que se mide sobre el modelo ya
+## montado.
+func _preparar_bola() -> void:
 	var reproductor := vista.get_node_or_null("AnimationPlayer")
 	if reproductor:
 		reproductor.free()
-	# la vista se coloca a mano en coordenadas de mundo, no la arrastra la bola
-	vista.top_level = true
-	bola.add_child(vista)
-
-	estela = Util.particulas(Color(1, 1, 1, 0.5), 0.4, 20)
-	estela.one_shot = false
-	estela.emitting = false
-	bola.add_child(estela)
-	add_child(bola)
-	# ya en el arbol y sin mover: las cajas globales de las mallas son la caja
-	# del modelo en sus propias unidades
 	_caja_bola = _preparar_modelo(vista)
 	_diam_bola = maxf(_caja_bola.size[_caja_bola.size.max_axis_index()], 0.0001)
 	_escalar_vista(1.0)
@@ -353,54 +280,17 @@ func _montar_jaula() -> void:
 	campo.excluir.append_array(_jaula.cuerpos())
 
 
-func _crear_ui() -> void:
-	var capa := CanvasLayer.new()
-	add_child(capa)
-
-	hud = Label.new()
-	hud.position = Vector2(24, 18)
-	hud.add_theme_font_size_override("font_size", 20)
-	capa.add_child(hud)
-
-	msg = Label.new()
-	msg.add_theme_font_size_override("font_size", 44)
-	msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	msg.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
-	capa.add_child(msg)
-
-	barra = ProgressBar.new()
-	barra.show_percentage = false
-	barra.custom_minimum_size = Vector2(320, 22)
-	barra.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM, Control.PRESET_MODE_MINSIZE, 40)
-	capa.add_child(barra)
-
-	barra_stam = ProgressBar.new()
-	barra_stam.show_percentage = false
-	barra_stam.max_value = STAMINA_MAX
-	barra_stam.custom_minimum_size = Vector2(320, 14)
-	barra_stam.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM,
-		Control.PRESET_MODE_MINSIZE, 72)
-	capa.add_child(barra_stam)
-
-	if DisplayServer.is_touchscreen_available():
-		var pegar := Button.new()
-		pegar.text = "GOLPE"
-		pegar.custom_minimum_size = Vector2(190, 190)
-		pegar.focus_mode = Control.FOCUS_NONE   # con foco, el espacio lo pulsaria
-		pegar.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT,
-			Control.PRESET_MODE_MINSIZE, 32)
-		pegar.button_down.connect(func(): golpe.cargar())
-		pegar.button_up.connect(func(): golpe.soltar())
-		capa.add_child(pegar)
-
-		var drop := Button.new()
-		drop.text = "DROP +1"
-		drop.custom_minimum_size = Vector2(130, 64)
-		drop.focus_mode = Control.FOCUS_NONE
-		drop.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT,
-			Control.PRESET_MODE_MINSIZE, 24)
-		drop.pressed.connect(_drop)
-		capa.add_child(drop)
+## Los nodos estan en Juego.tscn; aca solo queda lo que un .tscn no guarda:
+## a quien avisan los botones y si se ven (solo en pantalla tactil).
+func _conectar_tactil() -> void:
+	var tactil := DisplayServer.is_touchscreen_available()
+	$UI/Pegar.visible = tactil
+	$UI/Drop.visible = tactil
+	if not tactil:
+		return
+	$UI/Pegar.button_down.connect(func(): golpe.cargar())
+	$UI/Pegar.button_up.connect(func(): golpe.soltar())
+	$UI/Drop.pressed.connect(_drop)
 
 
 func _ir_a_hoyo(i: int) -> void:
@@ -917,7 +807,7 @@ func _self_check() -> void:
 	_saltando = false
 	stamina = stamina_salto
 	print("modelo %s | caja %s | diametro %.2f u"
-		% [MODELO_BOLA.get_file(), str(_caja_bola), _diam_bola])
+		% [vista.scene_file_path.get_file(), str(_caja_bola), _diam_bola])
 	print("self-check OK | tee %s | bandera %s | %d m | par %d"
 		% [str(t.round()), str(b.round()),
 		   roundi(Vector2(t.x - b.x, t.z - b.z).length()), campo.par()])

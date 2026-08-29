@@ -1,10 +1,144 @@
-[gd_scene format=3 uid="uid://bylh5uocmyxo3"]
+[gd_scene format=3 uid="uid://dyqheyjdjknog"]
 
 [ext_resource type="Script" uid="uid://c5lun48aur4vd" path="res://scripts/juego.gd" id="1_juego"]
 [ext_resource type="Script" uid="uid://twum5knlwid8" path="res://scripts/golpe.gd" id="2_golpe"]
+[ext_resource type="Texture2D" uid="uid://4fgg535aj87s" path="res://ui/portada.png" id="3_47w8y"]
+[ext_resource type="PackedScene" uid="uid://i61txw5smhdd" path="res://escenas/Campo.tscn" id="4_4ru81"]
+[ext_resource type="Script" uid="uid://dljmkirv0dom7" path="res://scripts/campo.gd" id="5_nv0ic"]
+[ext_resource type="PackedScene" uid="uid://nv4bpr3ue734" path="res://escenas/Piche.tscn" id="6_jv425"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_l3i6u"]
+sky_top_color = Color(0.32, 0.55, 0.9, 1)
+sky_horizon_color = Color(0.78, 0.87, 0.95, 1)
+ground_horizon_color = Color(0.78, 0.87, 0.95, 1)
+sun_angle_max = 12.0
+
+[sub_resource type="Sky" id="Sky_47w8y"]
+sky_material = SubResource("ProceduralSkyMaterial_l3i6u")
+
+[sub_resource type="Environment" id="Environment_33jbc"]
+background_mode = 2
+sky = SubResource("Sky_47w8y")
+ambient_light_source = 3
+ambient_light_energy = 0.5
+tonemap_mode = 3
+fog_enabled = true
+fog_light_color = Color(0.78, 0.87, 0.95, 1)
+fog_density = 0.0008
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_cqm7f"]
+bounce = 0.5
 
 [node name="Juego" type="Node3D" unique_id=1662410881]
 script = ExtResource("1_juego")
 
 [node name="Golpe" type="Node3D" parent="." unique_id=880227739]
 script = ExtResource("2_golpe")
+
+[node name="Camara" type="Camera3D" parent="." unique_id=1472793157]
+fov = 62.0
+
+[node name="Sol" type="DirectionalLight3D" parent="." unique_id=1360260118]
+transform = Transform3D(0.81915206, 0.4262504, -0.38379753, 0, 0.66913056, 0.74314487, 0.57357645, -0.6087487, 0.54811966, 0, 0, 0)
+light_energy = 1.35
+shadow_enabled = true
+directional_shadow_max_distance = 300.0
+
+[node name="Entorno" type="WorldEnvironment" parent="." unique_id=1849689296]
+environment = SubResource("Environment_33jbc")
+
+[node name="UI" type="CanvasLayer" parent="." unique_id=1252830624]
+
+[node name="Hud" type="Label" parent="UI" unique_id=502385289]
+offset_left = 24.0
+offset_top = 18.0
+offset_right = 24.0
+offset_bottom = 18.0
+theme_override_font_sizes/font_size = 20
+
+[node name="Msg" type="Label" parent="UI" unique_id=686887470]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -0.5
+offset_top = -11.5
+offset_right = 0.5
+offset_bottom = 11.5
+theme_override_font_sizes/font_size = 44
+horizontal_alignment = 1
+
+[node name="Barra" type="ProgressBar" parent="UI" unique_id=520441117]
+custom_minimum_size = Vector2(320, 22)
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -2.0
+offset_top = -44.0
+offset_right = 2.0
+offset_bottom = -40.0
+show_percentage = false
+
+[node name="BarraStam" type="ProgressBar" parent="UI" unique_id=1542535771]
+custom_minimum_size = Vector2(320, 14)
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -2.0
+offset_top = -76.0
+offset_right = 2.0
+offset_bottom = -72.0
+show_percentage = false
+
+[node name="Pegar" type="Button" parent="UI" unique_id=1771028777]
+custom_minimum_size = Vector2(190, 190)
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -92.0
+offset_top = -63.0
+offset_right = -32.0
+offset_bottom = -32.0
+focus_mode = 0
+text = "GOLPE"
+
+[node name="Drop" type="Button" parent="UI" unique_id=1780975695]
+custom_minimum_size = Vector2(130, 64)
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -99.0
+offset_top = 24.0
+offset_right = -24.0
+offset_bottom = 55.0
+focus_mode = 0
+text = "DROP +1"
+
+[node name="Portada" type="CanvasLayer" parent="." unique_id=601856004]
+layer = 100
+
+[node name="Imagen" type="TextureRect" parent="Portada" unique_id=11621834]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = ExtResource("3_47w8y")
+expand_mode = 1
+stretch_mode = 6
+
+[node name="Campo" type="Node3D" parent="." unique_id=821126879 instance=ExtResource("4_4ru81")]
+script = ExtResource("5_nv0ic")
+
+[node name="Piche" type="RigidBody3D" parent="." unique_id=2077429810 instance=ExtResource("6_jv425")]
+mass = 0.0459
+physics_material_override = SubResource("PhysicsMaterial_cqm7f")
+freeze = true
+continuous_cd = true
+contact_monitor = true
+max_contacts_reported = 4
