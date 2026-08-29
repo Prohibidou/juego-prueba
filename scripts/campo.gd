@@ -1,0 +1,352 @@
+extends Node3D
+class_name Campo
+## El campo: una fotogrametria real de un club de golf, y los hoyos que se
+## juegan sobre ella. Sustituye al terreno generado con Terrain3D.
+##
+## La malla trae su propio relieve, arboles y edificios, asi que aqui no se
+## genera nada: solo se le pone colision, se sacan alturas por rayo y se montan
+## la copa y la bandera de cada hoyo.
+##
+## Las coordenadas de HOYOS se sacaron mirando el campo desde arriba con
+## herramientas/VerMapa.tscn. Para mover un tee o una bandera, se toca esta
+## tabla y se vuelve a mirar el render.
+
+const CURSO := "res://resources-3d/overlook_golf_course.glb"
+const ESCALA := 1.0 / 0.0018   # deshace la escala que mete Sketchfab
+
+# medidas reales de golf
+const R_COPA := 0.054          # 108 mm de diametro
+const PROF_COPA := 0.12
+const R_PLATAFORMA := 3.0
+const ALTO_PLATAFORMA := 0.15  # la plataforma del hoyo se levanta sobre el
+                               # terreno: sin eso la copa quedaria enterrada en
+                               # la malla y la bola no podria bajar del labio
+const ALTO_MASTIL := 2.13
+const R_GREEN := 14.0
+const ANCHO_CALLE := 22.0
+
+const TECHO := 300.0           # desde donde se lanzan los rayos de altura
+const SUELO := -80.0
+
+# Zonas. Sin mapa de control pintado hay que deducirlas de la geometria del
+# hoyo: cerca de la bandera es green, en el pasillo tee-bandera es calle, y el
+# resto rough. Los bunkers de la foto no se detectan.
+const ZONA_ROUGH := 0
+const ZONA_CALLE := 1
+const ZONA_GREEN := 3
+const NOMBRE_ZONA := {0: "rough", 1: "calle", 3: "green"}
+
+const HOYOS := [
+	{"par": 3, "tee": Vector2(270, 440), "bandera": Vector2(307, 321),
+	 "viento": Vector3(1.5, 0, 0.5)},
+	{"par": 4, "tee": Vector2(431, 476), "bandera": Vector2(401, 229),
+	 "viento": Vector3(-2.0, 0, 1.0)},
+	{"par": 4, "tee": Vector2(700, 380), "bandera": Vector2(619, 572),
+	 "viento": Vector3(0.5, 0, -2.5)},
+	{"par": 5, "tee": Vector2(563, 500), "bandera": Vector2(563, 119),
+	 "viento": Vector3(3.0, 0, 0.0)},
+]
+
+var indice := 0
+var excluir: Array[RID] = []   # la bola, para que no la pisen los rayos
+
+var _curso: Node3D
+var _copa: Node3D
+var _tee := Vector3.ZERO
+var _bandera := Vector3.ZERO
+var _labio := 0.0
+var animales: Array = []
+
+
+## Monta el campo. Hay que esperarlo: la colision no existe hasta que la fisica
+## ha corrido un fotograma, y sin ella los rayos de altura no devuelven nada.
+func preparar() -> void:
+	_curso = load(CURSO).instantiate()
+	add_child(_curso)
+	_curso.scale = Vector3.ONE * ESCALA
+	await get_tree().process_frame
+
+	var caja := _aabb(_curso)
+	_curso.position -= caja.position   # esquina del campo en el origen
+	await get_tree().process_frame
+
+	var n := 0
+	for m: MeshInstance3D in _mallas(_curso):
+		m.create_trimesh_collision()
+		# La foto aerea ya trae la luz horneada; volver a sombrearla deja los
+		# arboles casi negros. Sin sombreado se ve la textura tal cual.
+		for i in m.get_surface_override_material_count():
+			var mat: BaseMaterial3D = m.mesh.surface_get_material(i)
+			if mat:
+				var copia: BaseMaterial3D = mat.duplicate()
+				copia.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+				m.set_surface_override_material(i, copia)
+		n += 1
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	print("campo listo: %d mallas con colision, %s m" % [n, str(_aabb(_curso).size.round())])
+
+
+func par() -> int:
+	return HOYOS[indice]["par"]
+
+
+func viento() -> Vector3:
+	return HOYOS[indice]["viento"]
+
+
+func pos_tee() -> Vector3:
+	return _tee
+
+
+func pos_bandera() -> Vector3:
+	return _bandera
+
+
+func labio_copa() -> float:
+	return _labio
+
+
+## Cambia de hoyo: recoloca tee, bandera y copa. El campo no se recarga.
+func ir_a(i: int) -> void:
+	indice = i
+	var h: Dictionary = HOYOS[i]
+	var t: Vector2 = h["tee"]
+	var b: Vector2 = h["bandera"]
+	_tee = Vector3(t.x, altura_terreno(t.x, t.y), t.y)
+	_bandera = Vector3(b.x, altura_terreno(b.x, b.y), b.y)
+	_labio = _bandera.y + ALTO_PLATAFORMA
+	_montar_copa()
+	_poblar_fauna()
+
+
+func altura_terreno(x: float, z: float) -> float:
+	var esp := get_world_3d().direct_space_state
+	if esp == null:
+		return 0.0
+	var q := PhysicsRayQueryParameters3D.create(Vector3(x, TECHO, z), Vector3(x, SUELO, z))
+	q.exclude = excluir
+	var golpe := esp.intersect_ray(q)
+	return golpe["position"].y if golpe else _bandera.y
+
+
+func embocada(pos: Vector3) -> bool:
+	return pos.y < _labio - 0.04 \
+		and Vector2(pos.x - _bandera.x, pos.z - _bandera.z).length() < R_COPA
+
+
+## ponytail: zonas por geometria, no por textura. La foto no dice donde acaba la
+## calle; deducirlo del pasillo tee-bandera es aproximado pero suficiente para
+## que el rough penalice. Si hace falta precision, pintar un mapa de zonas.
+func zona(x: float, z: float) -> int:
+	var p := Vector2(x, z)
+	if p.distance_to(Vector2(_bandera.x, _bandera.z)) < R_GREEN:
+		return ZONA_GREEN
+	var a := Vector2(_tee.x, _tee.z)
+	var b := Vector2(_bandera.x, _bandera.z)
+	var ab := b - a
+	var t := clampf((p - a).dot(ab) / maxf(ab.length_squared(), 0.001), 0.0, 1.0)
+	return ZONA_CALLE if p.distance_to(a + ab * t) < ANCHO_CALLE else ZONA_ROUGH
+
+
+func factor_damp(z: int) -> float:
+	match z:
+		ZONA_CALLE: return 1.0
+		ZONA_GREEN: return 0.7
+		_: return 3.5
+
+
+func retiene_efecto(z: int) -> float:
+	return 1.0 if z != ZONA_ROUGH else 0.45
+
+
+func es_peligro(_z: int) -> bool:
+	return false   # el campo real no tiene lava; el agua no esta marcada
+
+
+func damp_suelo() -> float:
+	return 0.30
+
+
+func nombre_zona(z: int) -> String:
+	return NOMBRE_ZONA.get(z, "?")
+
+
+# ---------------------------------------------------------------------------
+# La copa: plataforma levantada con el agujero de 108 mm y la cazoleta debajo.
+# ---------------------------------------------------------------------------
+
+func _montar_copa() -> void:
+	if _copa:
+		_copa.queue_free()
+	_copa = Node3D.new()
+	add_child(_copa)
+
+	var c := Vector2(_bandera.x, _bandera.z)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var lados := 40
+	var anillos := 5
+	for i in lados:
+		var a0 := TAU * i / lados
+		var a1 := TAU * (i + 1) / lados
+		for k in anillos:
+			var r0: float = lerpf(R_COPA, R_PLATAFORMA, float(k) / anillos)
+			var r1: float = lerpf(R_COPA, R_PLATAFORMA, float(k + 1) / anillos)
+			var p00 := _punto(c, a0, r0)
+			var p01 := _punto(c, a1, r0)
+			var p10 := _punto(c, a0, r1)
+			var p11 := _punto(c, a1, r1)
+			st.add_vertex(p00); st.add_vertex(p10); st.add_vertex(p11)
+			st.add_vertex(p00); st.add_vertex(p11); st.add_vertex(p01)
+	# pared y fondo de la cazoleta
+	for i in lados:
+		var a0 := TAU * i / lados
+		var a1 := TAU * (i + 1) / lados
+		var s0 := Vector3(c.x + cos(a0) * R_COPA, _labio, c.y + sin(a0) * R_COPA)
+		var s1 := Vector3(c.x + cos(a1) * R_COPA, _labio, c.y + sin(a1) * R_COPA)
+		var f0 := s0 - Vector3(0, PROF_COPA, 0)
+		var f1 := s1 - Vector3(0, PROF_COPA, 0)
+		st.add_vertex(s0); st.add_vertex(f1); st.add_vertex(f0)
+		st.add_vertex(s0); st.add_vertex(s1); st.add_vertex(f1)
+		st.add_vertex(f0); st.add_vertex(f1); st.add_vertex(Vector3(c.x, _labio - PROF_COPA, c.y))
+	st.generate_normals()
+
+	var malla := st.commit()
+	var mi := MeshInstance3D.new()
+	mi.mesh = malla
+	mi.material_override = Util.mat(Color(0.42, 0.68, 0.30))
+	_copa.add_child(mi)
+
+	var cuerpo := StaticBody3D.new()
+	cuerpo.physics_material_override = Util.fisica()
+	var cs := CollisionShape3D.new()
+	cs.shape = malla.create_trimesh_shape()
+	cuerpo.add_child(cs)
+	_copa.add_child(cuerpo)
+
+	var mastil := Util.cilindro(0.008, 0.008, ALTO_MASTIL, Color(0.95, 0.95, 0.95), 8)
+	mastil.position = Vector3(_bandera.x, _labio + ALTO_MASTIL / 2.0, _bandera.z)
+	_copa.add_child(mastil)
+
+	var tela := MeshInstance3D.new()
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.42, 0.28)
+	tela.mesh = quad
+	var m := Util.mat(Color(0.95, 0.12, 0.12))
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	tela.material_override = m
+	tela.position = Vector3(_bandera.x + 0.21, _labio + ALTO_MASTIL - 0.2, _bandera.z)
+	_copa.add_child(tela)
+
+
+func _punto(c: Vector2, ang: float, r: float) -> Vector3:
+	var x := c.x + cos(ang) * r
+	var z := c.y + sin(ang) * r
+	var borde := altura_terreno(c.x + cos(ang) * R_PLATAFORMA, c.y + sin(ang) * R_PLATAFORMA)
+	return Vector3(x, lerpf(_labio, borde, r / R_PLATAFORMA), z)
+
+
+# ---------------------------------------------------------------------------
+
+func _poblar_fauna() -> void:
+	for a in animales:
+		if is_instance_valid(a["nodo"]):
+			a["nodo"].queue_free()
+	animales.clear()
+	var col := Color(0.85, 0.82, 0.78)
+	var medio := (Vector2(_tee.x, _tee.z) + Vector2(_bandera.x, _bandera.z)) * 0.5
+	for n in 6:
+		var p := medio + Vector2(randf_range(-60, 60), randf_range(-60, 60))
+		if p.distance_to(Vector2(_tee.x, _tee.z)) < 35.0:
+			continue
+		var nodo := Node3D.new()
+		var cuerpo := MeshInstance3D.new()
+		var cap := CapsuleMesh.new()
+		cap.radius = 0.22
+		cap.height = 0.7
+		cap.radial_segments = 7
+		cuerpo.mesh = cap
+		cuerpo.material_override = Util.mat(col)
+		cuerpo.rotation.x = PI / 2.0
+		cuerpo.position.y = 0.28
+		nodo.add_child(cuerpo)
+		var cabeza := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.16
+		sm.height = 0.32
+		sm.radial_segments = 7
+		sm.rings = 4
+		cabeza.mesh = sm
+		cabeza.material_override = Util.mat(col.lightened(0.1))
+		cabeza.position = Vector3(0, 0.48, -0.3)
+		nodo.add_child(cabeza)
+		nodo.position = Vector3(p.x, altura_terreno(p.x, p.y), p.y)
+		add_child(nodo)
+		animales.append({"nodo": nodo, "dir": randf() * TAU, "t": randf() * 3.0,
+			"vivo": true, "color": col})
+
+
+func choque(pos: Vector3, vel: Vector3) -> String:
+	if vel.length() < 5.0:
+		return ""
+	for a in animales:
+		if not a["vivo"]:
+			continue
+		var n: Node3D = a["nodo"]
+		if pos.distance_to(n.global_position + Vector3.UP * 0.4) < 1.3:
+			_aturdir(a)
+			return "animal"
+	return ""
+
+
+func mover_animales(dt: float, pos_bola: Vector3, peligro: bool) -> void:
+	for a in animales:
+		if not a["vivo"]:
+			continue
+		var n: Node3D = a["nodo"]
+		a["t"] -= dt
+		if a["t"] <= 0.0:
+			a["dir"] = randf() * TAU
+			a["t"] = randf_range(1.5, 4.0)
+		if peligro and n.global_position.distance_to(pos_bola) < 25.0:
+			a["dir"] = atan2(n.global_position.x - pos_bola.x, n.global_position.z - pos_bola.z)
+		var vel := 6.0 if peligro else 1.6
+		var np := n.position + Vector3(sin(a["dir"]), 0, cos(a["dir"])) * vel * dt
+		np.y = altura_terreno(np.x, np.z)
+		n.position = np
+		n.rotation.y = a["dir"] + PI
+
+
+## El animal queda aturdido, no muerto: se levanta y sale corriendo (DISENO.md).
+func _aturdir(a: Dictionary) -> void:
+	a["vivo"] = false
+	var nodo: Node3D = a["nodo"]
+	Util.reventar(self, nodo.global_position + Vector3.UP * 0.4, a["color"], 12)
+	var t := create_tween()
+	t.tween_property(nodo, "rotation:z", PI / 2.0, 0.25)
+	t.tween_interval(1.0)
+	t.tween_property(nodo, "rotation:z", 0.0, 0.3)
+	t.tween_callback(func(): a["vivo"] = true)
+
+
+func _aabb(n: Node) -> AABB:
+	var caja := AABB()
+	var primero := true
+	for m: MeshInstance3D in _mallas(n):
+		var c: AABB = m.global_transform * m.get_aabb()
+		if primero:
+			caja = c
+			primero = false
+		else:
+			caja = caja.merge(c)
+	return caja
+
+
+func _mallas(n: Node) -> Array[MeshInstance3D]:
+	var r: Array[MeshInstance3D] = []
+	if n is MeshInstance3D:
+		r.append(n)
+	for h in n.get_children():
+		r.append_array(_mallas(h))
+	return r

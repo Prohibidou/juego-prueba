@@ -1,0 +1,25 @@
+[remap]
+
+importer="wavefront_obj"
+importer_version=1
+type="Mesh"
+uid="uid://cuvwbv3hdsh8c"
+path="res://.godot/imported/10508_Golf Club - Driver_Diffuse_v2_L3.obj-2183892c7d6b5e27f17e8994563d4a46.mesh"
+
+[deps]
+
+files=["res://.godot/imported/10508_Golf Club - Driver_Diffuse_v2_L3.obj-2183892c7d6b5e27f17e8994563d4a46.mesh"]
+
+source_file="res://resources-3d/Golf_Club_-_Driver_v2_L3.123cb65689fb-760c-4f9c-aeb1-d1a54ecc4451/Golf_Club_-_Driver_v2_L3.123cb65689fb-760c-4f9c-aeb1-d1a54ecc4451/10508_Golf Club - Driver_Diffuse_v2_L3.obj"
+dest_files=["res://.godot/imported/10508_Golf Club - Driver_Diffuse_v2_L3.obj-2183892c7d6b5e27f17e8994563d4a46.mesh", "res://.godot/imported/10508_Golf Club - Driver_Diffuse_v2_L3.obj-2183892c7d6b5e27f17e8994563d4a46.mesh"]
+
+[params]
+
+generate_tangents=true
+generate_lods=true
+generate_shadow_mesh=true
+generate_lightmap_uv2=false
+generate_lightmap_uv2_texel_size=0.2
+scale_mesh=Vector3(1, 1, 1)
+offset_mesh=Vector3(0, 0, 0)
+force_disable_mesh_compression=false
