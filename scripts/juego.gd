@@ -333,6 +333,12 @@ func _aplicar_damp() -> void:
 func _drop() -> void:
 	if not (quieto and not embocada and listo):
 		return
+	# El drop recoloca la bola hasta 2.8 m a dedo, sin mirar paredes: dentro de
+	# la jaula eso la teletransporta al otro lado de los muros y se salta el
+	# portazo entero por un golpe de pena. Y en pleno cine, ademas, resetearia
+	# _empujando/_portazo a mitad del guion.
+	if _enjaulado() or golpe.cine:
+		return
 	golpes += PENA_DROP
 	_poner_bola(bola.global_position + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2)))
 	_aviso("Drop  +%d" % PENA_DROP, 1.0)
@@ -480,7 +486,12 @@ func _physics_process(dt: float) -> void:
 	# ponytail: el frenado es exponencial, asi que la cola es larga y la bola
 	# repta un rato. Si se nota flotante, cambiarlo por resistencia a la
 	# rodadura: fuerza constante en contra, no proporcional a la velocidad.
-	if not volando:
+	# Mientras dura el empujon no se mira si esta quieta: la velocidad la pone el
+	# guion y con carga minima el empuje lento (PORTAZO_LENTO) queda justo en
+	# QUIETA, asi que la bola se declaraba quieta y se congelaba en pleno cine.
+	# Peor todavia: _empujando se quedaba puesto y el siguiente golpe del jugador
+	# lo pisaba _vel_portazo viejo. Ya se decidira cuando suelte.
+	if not volando and not _empujando:
 		var casi_quieta := vel.length() < QUIETA and bola.angular_velocity.length() < QUIETA_GIRO
 		_t_lento = _t_lento + dt if casi_quieta else 0.0
 		# CAIDA_MAX solo corta el REBOTE despues de un golpe que voló: para un
@@ -558,12 +569,14 @@ func _saltar() -> void:
 ## devuelve el rumbo hacia fuera; si no, se quedaba dentro dando tumbos.
 func _reventar_puerta(fuera: Vector3) -> void:
 	var v := bola.linear_velocity
-	# se guarda el disparo ENTERO, vertical incluida: durante el empujon la
-	# velocidad la manda el guion, y al soltarse se recupera tal cual. Forzando
-	# solo la horizontal, la gravedad se comia el ascenso durante el medio
-	# segundo del beat y el impulso llegaba a 6 m en vez de a 26.
+	# se guarda el disparo ENTERO, vertical incluida y CON SU SIGNO: durante el
+	# empujon la velocidad la manda el guion, y al soltarse se recupera tal cual.
+	# Forzando solo la horizontal, la gravedad se comia el ascenso durante el
+	# medio segundo del beat y el impulso llegaba a 6 m en vez de a 26. Con el
+	# valor absoluto no se perdia el ascenso, pero una bola que YA venia bajando
+	# salia disparada hacia arriba justo en el plano de cine.
 	_vel_portazo = (fuera * Vector3(v.x, 0.0, v.z).length()
-		+ Vector3.UP * absf(v.y)) * PORTAZO_FRENA
+		+ Vector3.UP * v.y) * PORTAZO_FRENA
 	_empujando = true
 	_portazo = PORTAZO_LENTO
 	var tw := create_tween()
@@ -630,7 +643,9 @@ func _marca(pos: Vector3, v: float) -> void:
 
 func _aviso(texto: String, seg: float) -> void:
 	msg.text = texto
-	await get_tree().create_timer(seg).timeout
+	# en tiempo REAL, como el temporizador del cine: con el time_scale del
+	# portazo un aviso de 1.6 s se quedaba cinco segundos y pico en pantalla
+	await get_tree().create_timer(seg, true, false, true).timeout
 	if msg.text == texto:
 		msg.text = ""
 
@@ -646,7 +661,9 @@ func _embocar() -> void:
 	total += puntos
 	msg.text = "%s  +%d" % [
 		"Birdie!" if d < 0 else ("Par" if d == 0 else "+%d" % d), puntos]
-	await get_tree().create_timer(1.8).timeout
+	# tambien en tiempo real: si se emboca con la camara lenta puesta, el cartel
+	# del resultado se estiraba igual que los avisos
+	await get_tree().create_timer(1.8, true, false, true).timeout
 	msg.text = ""
 	golpes = 0
 	indice += 1

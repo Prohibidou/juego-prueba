@@ -51,6 +51,16 @@ const ANCHO_CALLE := 22.0
 
 const TECHO := 300.0           # desde donde se lanzan los rayos de altura
 const SUELO := -80.0
+# ...pero 300 se queda CORTO: el mapa del muelle mide 366 m de alto, asi que
+# bajo los mastiles y las gruas mas altas el rayo arrancaba DENTRO de la
+# geometria, y un rayo no cuenta lo que ya lo envuelve (hit_from_inside viene
+# en false): la altura salia mal justo donde se coloca a ciegas. El techo de
+# verdad se saca de la caja del mapa en preparar(); TECHO queda de arranque.
+const MARGEN_TECHO := 10.0
+# Cuanto puede hundirse una siembra respecto del pasillo tee-bandera antes de
+# darla por caida al mar o a la bodega por uno de los huecos del casco.
+const HUNDIDO := 8.0
+const INTENTOS_SIEMBRA := 6    # tiros de dado por pieza antes de rendirse
 
 # Zonas. Sin mapa de control pintado hay que deducirlas de la geometria del
 # hoyo: cerca de la bandera es green, en el pasillo tee-bandera es calle, y el
@@ -76,6 +86,7 @@ var _tee := Vector3.ZERO
 var _meta := AABB()
 var _bandera := Vector3.ZERO
 var _labio := 0.0
+var _techo := TECHO             # el de verdad lo mide preparar() con la caja del mapa
 var animales: Array = []
 var basura: Array = []
 
@@ -103,6 +114,12 @@ func preparar() -> void:
 	# importador del glb (_subresources/generate/physics), pero el casco del
 	# barco esta afinado a mano aca abajo y el importador no expone esos
 	# ajustes: mover eso es una sesion entera, no un renglon.
+	# El mapa ya viene recentrado desde Campo.tscn, asi que aca no se toca su
+	# position: solo se mide la caja para saber hasta donde llega lo mas alto
+	# (mastiles, gruas) y subir el techo de los rayos por encima de eso.
+	var caja := _aabb(_curso)
+	_techo = caja.position.y + caja.size.y + MARGEN_TECHO
+
 	var n := 0
 	for m: MeshInstance3D in _mallas(_curso):
 		if m.name == "Barco":
@@ -116,6 +133,11 @@ func preparar() -> void:
 			# vez de pisarlo. project_hull_vertices pega los vertices del
 			# casco a la malla real; max_concavity bajo y mas cascos hacen
 			# que le cueste mas alejarse de la forma original.
+			#
+			# Se probo pasar esto a trimesh liso (mas simple, y en teoria mas
+			# fiel a la malla real): rompia el ajuste de la jaula, que esta
+			# calibrada sobre ESTA cubierta inflada -el tee bajaba 5 m y la
+			# puerta dejaba de frenar a la bola andando. Se queda como estaba.
 			var ajuste := MeshConvexDecompositionSettings.new()
 			ajuste.max_concavity = 0.001
 			ajuste.resolution = 400000
@@ -124,6 +146,19 @@ func preparar() -> void:
 			m.create_multiple_convex_collisions(ajuste)
 		else:
 			m.create_trimesh_collision()
+		# Un trimesh choca solo por el lado de las normales (backface_collision
+		# arranca en false, y desde Godot 4.5 Jolt lo respeta de verdad). Medio
+		# mapa esta modelado a una cara -galpones, silos-, asi que la bola
+		# atravesaba esas paredes al pegarles "desde atras", y el CCD no la
+		# salva porque su cast respeta el mismo flag. Doble cara y listo. Los
+		# cascos convexos del barco no tienen esta propiedad -un convexo no
+		# tiene "el otro lado"-, el chequeo de tipo los salta solo. Los rayos
+		# de altura no cambian: hit_back_faces ya venia en true.
+		for cuerpo in m.get_children():
+			if cuerpo is StaticBody3D:
+				for cs in cuerpo.get_children():
+					if cs is CollisionShape3D and cs.shape is ConcavePolygonShape3D:
+						cs.shape.backface_collision = true
 		# La foto aerea del campo viejo venia con la luz horneada; volver a
 		# sombrearla dejaba los arboles casi negros, asi que se le sacaba el
 		# sombreado. Un modelo normal, con sus mapas de normal, hay que
@@ -205,8 +240,9 @@ func ir_a(i: int) -> void:
 ## que hace falta para colocar cosas a ciegas; pero el rayo para en la PRIMERA
 ## colision, y bajo un arbol esa es la copa, no el suelo. Quien ya sabe mas o
 ## menos a que altura esta lo que busca puede bajar el techo y saltarselas.
-func altura_terreno(x: float, z: float, techo := TECHO) -> float:
-	var h := _rayo(x, z, techo)
+func altura_terreno(x: float, z: float, techo := INF) -> float:
+	var desde: float = _techo if is_inf(techo) else techo
+	var h := _rayo(x, z, desde)
 	return _bandera.y if is_inf(h) else h
 
 
@@ -223,12 +259,38 @@ func _rayo(x: float, z: float, desde: float) -> float:
 	return golpe["position"].y if golpe else INF
 
 
+## Lo mismo que altura_terreno pero sin el apano: NAN cuando el rayo no da en
+## NADA. Quien coloca cosas a ciegas necesita distinguir "aqui no hay suelo" de
+## "el suelo esta justo a la altura de la bandera", que es lo que devolvia el
+## apano de arriba y dejaba piezas flotando en el aire.
+func _altura_cruda(x: float, z: float, techo := INF) -> float:
+	var desde: float = _techo if is_inf(techo) else techo
+	var h := _rayo(x, z, desde)
+	return NAN if is_inf(h) else h
+
+
+## Altura para SEMBRAR: ademas de exigir que el rayo pegue en algo, tira las
+## que se cuelan por los huecos del casco y acaban en el mar o en la bodega,
+## muy por debajo del pasillo tee-bandera. Devuelve NAN si el sitio no vale.
+func _altura_sembrable(x: float, z: float) -> float:
+	var y := _altura_cruda(x, z)
+	if is_nan(y) or y < minf(_tee.y, _bandera.y) - HUNDIDO:
+		return NAN
+	return y
+
+
 ## El SUELO, no lo primero que encuentre el rayo. altura_terreno para en la
 ## primera colision, y bajo un arbol esa es la copa: por eso la fauna, la
 ## basura y la gente aparecian plantadas quince metros en el aire. Se vuelve a
 ## tirar desde justo debajo de lo que encontro, y asi se van pelando capas
 ## hasta que una tirada ya no baja: eso es el suelo.
 func altura_suelo(x: float, z: float) -> float:
+	# Aca se deja TECHO fijo, no _techo: esta funcion pela capas de a 30 cm y
+	# con pocas vueltas, para atravesar hojas de un arbol, no un mastil entero.
+	# Arrancar mas alto (por los mastiles altos, que es lo que _techo corrige
+	# en altura_terreno) la hacia enganchar en cosas que el pelado no llegaba a
+	# atravesar antes de quedarse sin vueltas, y el tee salia mas abajo de lo
+	# que va.
 	var h := _rayo(x, z, TECHO)
 	if is_inf(h):
 		return _bandera.y
@@ -367,10 +429,23 @@ func _poblar_fauna() -> void:
 	animales.clear()
 	var medio := (Vector2(_tee.x, _tee.z) + Vector2(_bandera.x, _bandera.z)) * 0.5
 	for n in 6:
-		var p := medio + Vector2(randf_range(-60, 60), randf_range(-60, 60))
-		if p.distance_to(Vector2(_tee.x, _tee.z)) < 35.0:
+		# se tira el dado varias veces: medio radio de estos 60 m cae fuera del
+		# barco o sobre un hueco del casco, y ahi el bicho salia nadando en el
+		# mar o colgado en el aire a la altura de la bandera
+		var p := Vector2.ZERO
+		var y := NAN
+		for intento in INTENTOS_SIEMBRA:
+			p = medio + Vector2(randf_range(-60, 60), randf_range(-60, 60))
+			if p.distance_to(Vector2(_tee.x, _tee.z)) < 35.0:
+				continue
+			y = _altura_sembrable(p.x, p.y)
+			if not is_nan(y):
+				break
+		if is_nan(y):
 			continue
 		var nodo := (load(ANIMAL) as PackedScene).instantiate()
+		# altura_suelo pela la copa: _altura_sembrable ya valido que p es firme,
+		# pero el rayo bajo un arbol para en la copa, no en el pasto.
 		nodo.position = Vector3(p.x, altura_suelo(p.x, p.y), p.y)
 		add_child(nodo)
 		animales.append({"nodo": nodo, "dir": randf() * TAU, "t": randf() * 3.0,
@@ -389,8 +464,20 @@ func _poblar_basura() -> void:
 	var a := Vector2(_tee.x, _tee.z)
 	var b := Vector2(_bandera.x, _bandera.z)
 	for i in BASURAS:
-		var p := a.lerp(b, randf_range(0.08, 0.95)) \
-			+ Vector2.from_angle(randf() * TAU) * randf_range(2.0, ANCHO_CALLE)
+		# el pasillo cruza el costado del barco: hay tramos que caen al agua y
+		# huecos del casco por los que el rayo se cuela hasta la bodega. Se
+		# vuelve a tirar el dado unas cuantas veces y, si no sale sitio firme,
+		# esta pieza se queda sin sembrar.
+		var p := Vector2.ZERO
+		var y := NAN
+		for intento in INTENTOS_SIEMBRA:
+			p = a.lerp(b, randf_range(0.08, 0.95)) \
+				+ Vector2.from_angle(randf() * TAU) * randf_range(2.0, ANCHO_CALLE)
+			y = _altura_sembrable(p.x, p.y)
+			if not is_nan(y):
+				break
+		if is_nan(y):
+			continue
 		var molde: MeshInstance3D = _moldes.pick_random()
 		var caja: AABB = molde.mesh.get_aabb()
 		var malla: MeshInstance3D = molde.duplicate()
@@ -445,7 +532,15 @@ func mover_animales(dt: float, pos_bola: Vector3, peligro: bool) -> void:
 			a["dir"] = atan2(n.global_position.x - pos_bola.x, n.global_position.z - pos_bola.z)
 		var vel := 6.0 if peligro else 1.6
 		var np := n.position + Vector3(sin(a["dir"]), 0, cos(a["dir"])) * vel * dt
-		np.y = altura_terreno(np.x, np.z)
+		var y := _altura_cruda(np.x, np.z)
+		# el suelo no da saltos de dos metros de un paso al otro: si los da es
+		# el borde de la cubierta, un hueco del casco o un rayo que no pega en
+		# nada, y pegar el bicho a esa altura lo teletransportaba al mar o a la
+		# bandera. No se da el paso: se queda donde esta y se da la vuelta.
+		if is_nan(y) or absf(y - n.position.y) > 2.0:
+			a["dir"] = randf() * TAU
+			continue
+		np.y = y
 		n.position = np
 		n.rotation.y = a["dir"] + PI
 

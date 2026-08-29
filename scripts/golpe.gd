@@ -146,6 +146,16 @@ func soltar() -> void:
 	fuerza = 0.0
 
 
+## La carga se lee sondeando la tecla G, no por eventos: si se va el foco con
+## la barra a medias, el soltar pasa fuera de la ventana y nunca se ve, asi que
+## la carga se quedaba colgada subiendo. Se CANCELA, no se suelta: disparar un
+## golpe porque el jugador se cambio de ventana es peor que perder la barra.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and _cargando:
+		_cargando = false
+		fuerza = 0.0
+
+
 func _unhandled_input(e: InputEvent) -> void:
 	# apuntar arrastrando: en movil funciona igual, con el raton emulado
 	if not (e is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)):
@@ -263,7 +273,10 @@ func objetivo_camara(dt := 0.0) -> Vector3:
 		# piche se iba de cuadro en un pestaneo aunque el tiempo vaya al 25%.
 		# Y como el suavizado va con delta, en camara lenta la camara se queda
 		# atras a proposito: la jaula y la puerta se alejan en el encuadre.
-		return _bola.global_position + cine_offset
+		# El desvio es fijo, asi que en el muelle caia dentro del casco o de un
+		# galpon y el plano entero (2.4 s) se veia desde dentro de una pared:
+		# pasa por el mismo rayo que las demas ramas.
+		return _sin_pared(_bola.global_position, _bola.global_position + cine_offset)
 	if activo:
 		var atras := CAM_ATRAS_JAULA if enjaulado else CAM_ATRAS_TIRO
 		var alto := CAM_ALTO_JAULA if enjaulado else CAM_ALTO
@@ -328,7 +341,9 @@ func _mirada_deseada() -> Vector3:
 func cortar_a(desvio: Vector3) -> void:
 	cine = true
 	cine_offset = desvio
-	_camara.global_position = _bola.global_position + desvio
+	# el corte tambien se mira: si no, el plano ARRANCA ya metido en la pared y
+	# el rayo de objetivo_camara() solo lo arreglaria a partir del frame siguiente
+	_camara.global_position = _sin_pared(_bola.global_position, _bola.global_position + desvio)
 	_mirada = _bola.global_position
 	_camara.look_at(_mirada)
 
@@ -357,6 +372,9 @@ func _mover_camara(dt: float) -> void:
 	_camara.global_position = _camara.global_position.lerp(objetivo_camara(dt), paso)
 	_mirada = _mirada.lerp(_mirada_deseada(), paso)
 	_camara.look_at(_mirada)
-	var fov := CAM_FOV if activo else lerpf(CAM_FOV, CAM_FOV_MAX, _factor_velocidad())
+	# en cine el fov se queda quieto: el plano es una composicion fija, y como
+	# el guion sube la bola de 2.6 a 22 m/s, el ensanchado por velocidad metia
+	# un zoom de 62 a 73 grados en mitad del portazo.
+	var fov := CAM_FOV if (cine or activo) else lerpf(CAM_FOV, CAM_FOV_MAX, _factor_velocidad())
 	_camara.fov = lerpf(_camara.fov, fov, _paso(CAM_FOV_SUAVIZADO, dt))
 
