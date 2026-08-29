@@ -24,7 +24,7 @@ window/stretch/aspect="expand"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/terrain_3d/plugin.cfg")
+enabled=PackedStringArray("res://addons/terrain_3d/plugin.cfg", "res://addons/godot_mcp/plugin.cfg")
 
 [physics]
 
@@ -33,3 +33,8 @@ enabled=PackedStringArray("res://addons/terrain_3d/plugin.cfg")
 [rendering]
 
 renderer/rendering_method="mobile"
+
+[godot_mcp]
+
+network/port=9080
+network/http_port=9100
