@@ -11,16 +11,17 @@ class_name Campo
 ## herramientas/VerMapa.tscn. Para mover un tee o una bandera, se toca esta
 ## tabla y se vuelve a mirar el render.
 
-const CURSO := "res://resources-3d/overlook_golf_course.glb"
-const ESCALA := 1.0 / 0.0018   # deshace la escala que mete Sketchfab
+const CURSO := "res://resources-3d/PGJ_MAPA_MUELLE_v1.glb"
+const ESCALA := 1.0     # este ya viene en metros reales, no en escala Sketchfab
+# La foto aerea del campo viejo venia con la luz horneada y habia que
+# desactivarle el sombreado (si no, los arboles salian casi negros). El
+# muelle es un modelo normal con sus propios mapas de normal: sombrearlo es
+# lo correcto, asi que esto queda en false.
+const FOTO_AEREA := false
 
 # La basura viene como un escaparate de Sketchfab: cuarenta y pico piezas
 # sueltas (latas, cajas, ladrillos) repartidas sobre un plano. Se usan de
 # molde, se duplican y se siembran por el pasillo del hoyo.
-# Gente plantada por el campo que patea al piche y lo manda volando. Es una
-# escena aparte y se vale sola: se la siembra y se escucha su senal.
-const PATEADOR := "res://escenas/Pateador.tscn"
-const PATEADORES := 5          # por hoyo
 const BASURA := "res://modelos/trash_and_debris.glb"
 const BASURAS := 16            # piezas por hoyo
 
@@ -29,8 +30,8 @@ const R_COPA := 0.054          # 108 mm de diametro
 const PROF_COPA := 0.12
 const R_PLATAFORMA := 3.0
 const ALTO_PLATAFORMA := 0.15  # la plataforma del hoyo se levanta sobre el
-                               # terreno: sin eso la copa quedaria enterrada en
-                               # la malla y la bola no podria bajar del labio
+							   # terreno: sin eso la copa quedaria enterrada en
+							   # la malla y la bola no podria bajar del labio
 const ALTO_MASTIL := 2.13
 const R_GREEN := 14.0
 const ANCHO_CALLE := 22.0
@@ -47,14 +48,15 @@ const ZONA_GREEN := 3
 const NOMBRE_ZONA := {0: "rough", 1: "calle", 3: "green"}
 
 const HOYOS := [
-	{"par": 3, "tee": Vector2(270, 440), "bandera": Vector2(307, 321),
-	 "viento": Vector3(1.5, 0, 0.5)},
-	{"par": 4, "tee": Vector2(431, 476), "bandera": Vector2(401, 229),
-	 "viento": Vector3(-2.0, 0, 1.0)},
-	{"par": 4, "tee": Vector2(700, 380), "bandera": Vector2(619, 572),
-	 "viento": Vector3(0.5, 0, -2.5)},
-	{"par": 5, "tee": Vector2(563, 500), "bandera": Vector2(563, 119),
-	 "viento": Vector3(3.0, 0, 0.0)},
+	# el marcador "jaula" del glb cae justo sobre un hueco del casco (el rayo
+	# de altura lo atraviesa y pega abajo, en el mar): la jaula quedaba
+	# metida dentro del barco. Esta posicion es una meseta de la cubierta de
+	# verdad: se palpo a rayos que fuera plana Y que hubiera sitio detras
+	# para la camara (CAM_ATRAS_JAULA) sin chocar contra la caseta -el rincon
+	# de al lado se veia bien en la altura pero la camara quedaba pegada a
+	# una pared a 1.75 m, mirando el techo de la jaula de cerca.
+	{"par": 4, "tee": Vector2(1020.0, 821.3), "bandera": Vector2(994.03, 604.31),
+	 "viento": Vector3(1.0, 0, -0.5)},
 ]
 
 var indice := 0
@@ -67,7 +69,6 @@ var _bandera := Vector3.ZERO
 var _labio := 0.0
 var animales: Array = []
 var basura: Array = []
-var pateadores: Array = []
 
 var _moldes: Array[MeshInstance3D] = []
 
@@ -80,21 +81,49 @@ func preparar() -> void:
 	_curso.scale = Vector3.ONE * ESCALA
 	await get_tree().process_frame
 
+	# el marcador "jaula" que trae el modelo es solo para saber donde va el
+	# tee: la jaula de verdad (con puerta y todo) la arma _montar_jaula() en
+	# juego.gd. Dejar el marcador metia una caja solida encima del spawn.
+	var marcador := _curso.find_child("jaula", true, false)
+	if marcador:
+		marcador.queue_free()
+
 	var caja := _aabb(_curso)
 	_curso.position -= caja.position   # esquina del campo en el origen
 	await get_tree().process_frame
 
 	var n := 0
 	for m: MeshInstance3D in _mallas(_curso):
-		m.create_trimesh_collision()
-		# La foto aerea ya trae la luz horneada; volver a sombrearla deja los
-		# arboles casi negros. Sin sombreado se ve la textura tal cual.
-		for i in m.get_surface_override_material_count():
-			var mat: BaseMaterial3D = m.mesh.surface_get_material(i)
-			if mat:
-				var copia: BaseMaterial3D = mat.duplicate()
-				copia.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-				m.set_surface_override_material(i, copia)
+		if m.name == "Barco":
+			# un ConcavePolygonShape3D (el trimesh de siempre) es para suelo
+			# quieto: contra un cuerpo rigido rapido puede dejarlo atravesar,
+			# sobre todo en una carcasa fina como un casco. Con varios cascos
+			# convexos (V-HACD) el piche ya no se cuela. Con los ajustes por
+			# defecto cada casco infla un poco de mas alla de la malla real
+			# (queda "hinchado"): eso dejaba la cubierta solida mas arriba
+			# que la cubierta que se ve, y la jaula flotaba sobre el barco en
+			# vez de pisarlo. project_hull_vertices pega los vertices del
+			# casco a la malla real; max_concavity bajo y mas cascos hacen
+			# que le cueste mas alejarse de la forma original.
+			var ajuste := MeshConvexDecompositionSettings.new()
+			ajuste.max_concavity = 0.001
+			ajuste.resolution = 400000
+			ajuste.max_convex_hulls = 32
+			ajuste.project_hull_vertices = true
+			m.create_multiple_convex_collisions(ajuste)
+		else:
+			m.create_trimesh_collision()
+		# La foto aerea del campo viejo venia con la luz horneada; volver a
+		# sombrearla dejaba los arboles casi negros, asi que se le sacaba el
+		# sombreado. Un modelo normal, con sus mapas de normal, hay que
+		# dejarlo sombreado de verdad.
+		if FOTO_AEREA:
+			for i in m.get_surface_override_material_count():
+				var mat: BaseMaterial3D = m.mesh.surface_get_material(i)
+				if mat:
+					var copia: BaseMaterial3D = mat.duplicate()
+					copia.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+					m.set_surface_override_material(i, copia)
 		n += 1
 	var escaparate := (load(BASURA) as PackedScene).instantiate()
 	escaparate.visible = false     # se queda de molde, no se ve
@@ -139,7 +168,6 @@ func ir_a(i: int) -> void:
 	_montar_copa()
 	_poblar_fauna()
 	_poblar_basura()
-	_poblar_gente()
 
 
 ## `techo` es desde donde cae el rayo. Por defecto desde muy arriba, que es lo
@@ -362,26 +390,6 @@ func _poblar_basura() -> void:
 		pieza.rotation.y = randf() * TAU
 		add_child(pieza)
 		basura.append(pieza)
-
-
-## Siembra pateadores por el pasillo del hoyo, mirando a la bandera: el piche
-## sale en la direccion en la que miran, asi que se los planta de cara al hoyo.
-func _poblar_gente() -> void:
-	for g in pateadores:
-		if is_instance_valid(g):
-			g.queue_free()
-	pateadores.clear()
-	var a := Vector2(_tee.x, _tee.z)
-	var b := Vector2(_bandera.x, _bandera.z)
-	for i in PATEADORES:
-		var p := a.lerp(b, randf_range(0.15, 0.85)) \
-			+ Vector2.from_angle(randf() * TAU) * randf_range(4.0, ANCHO_CALLE)
-		var g: Node3D = (load(PATEADOR) as PackedScene).instantiate()
-		g.position = Vector3(p.x, altura_suelo(p.x, p.y), p.y)
-		var d := b - p
-		g.rotation.y = atan2(-d.y, d.x)   # su +X, por donde patea, al hoyo
-		add_child(g)
-		pateadores.append(g)
 
 
 ## Recoge lo que haya a tiro y devuelve cuantas piezas eran.

@@ -3,8 +3,8 @@ extends Node3D
 ##   godot --path . res://herramientas/VerMapa.tscn
 ## Deja user://mapa.png y un plano de coordenadas en user://mapa.log
 
-const CURSO := "res://resources-3d/overlook_golf_course.glb"
-const ESCALA := 1.0 / 0.0018   # deshace la escala que mete Sketchfab
+const CURSO := "res://resources-3d/PGJ_MAPA_MUELLE_v1.glb"
+const ESCALA := 1.0     # este ya viene en metros reales, no en escala Sketchfab
 
 var _log: FileAccess
 

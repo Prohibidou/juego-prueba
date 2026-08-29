@@ -28,17 +28,13 @@ const AIRE_TIEMPO := 1.1    # segundos de timon por golpe
 const CONDUCE_ACEL := 7.0   # m/s2 que mete el stick izquierdo
 const CONDUCE_MAX := 4.5    # m/s: es andar, no un golpe
 const GIRO_MAX := 9.0       # rad/s: por encima de esto la vuelta es un borron
-# --- stamina y correa ---
-# Andar es gratis pero solo alrededor de donde caiste; para ir mas lejos hay
-# que saltar, y saltar cuesta stamina. La basura del campo la repone: es lo que
-# obliga a desviarse de la linea recta al hoyo.
-const RADIO_ANDAR := 5.0
-const PASOS_LIMITE := 32      # puntos por anillo del suelo pintado
-const ANILLOS := 3            # anillos concentricos: mas, mejor se pega al relieve
+# --- stamina ---
+# Se anda libre, sin radio: lo unico que cuesta stamina es el impulso (G). La
+# basura del campo la repone: es lo que obliga a desviarse de la linea recta
+# al hoyo.
 const STAMINA_MAX := 100.0
 const STAMINA_BASURA := 20.0
 const STAMINA_IMPULSO := 60.0 # lo que cuesta el impulso (G) a barra llena
-const STAMINA_SALTO := 15.0   # lo que cuesta el salto (espacio)
 const IMPULSO_SALTO := 5.5    # m/s hacia arriba, sin tocar lo que ya lleve
 # Por debajo de esto no hay impulso: ni barra, ni golpe minimo. Es el mismo
 # numero que pinta de rojo la barra, para que lo que se ve y lo que se puede
@@ -59,36 +55,11 @@ const MODELO_BOLA := "res://modelos/PicheLowHighTest07.fbx"
 # en x 0.83..0.95 y el cuerpo va de -1 a 1, asi que encajan colgando los dos
 # del mismo nodo sin tocar nada. Eso deja trabajar en ejes locales de la jaula
 # y ahorra ir y volver de mundo para cada caja.
-# --- escena de inicio ---
-# La camioneta da vueltas con la jaula en la caja hasta que el jugador aprieta
-# G. Todo fijo: el momento de apretar no cambia nada, solo arranca. La jaula
-# del hoyo 1 es ESTA, la que viaja: sales de ella, caes en el campo y juegas.
-# Los hoyos 2 a 4 siguen con la suya plantada en el tee.
-const PORTADA := "res://portada.png"
-const CARGA_MIN := 5.0        # segundos minimos de portada, aunque cargue antes
-const CAMIONETA := "res://modelos/camioneta.glb"
-# La camioneta NO se mueve: se queda clavada en el tee y lo que se desliza es
-# el campo. Asi se lee como que va en marcha sin que pueda tropezarse con nada,
-# que es lo que pasaba cuando circulaba de verdad. El rumbo igual se BUSCA,
-# porque el campo que pasa por delante tiene que estar despejado. En circulo se metia en el rough y trepaba
-# arboles; y la linea tee-bandera del hoyo 1 se mete de lleno en uno, que es lo
-# que dejaba la camara dentro del follaje. Esto es una fotogrametria: no hay
-# carreteras ni la calle esta limpia, asi que hay que preguntarle al terreno.
-# No hace falta bucle: son mas de siete segundos de deslizamiento y al final se
-# queda quieta botando, que nadie se va a quedar mirando hasta ahi.
-const INTRO_MARCHA := 5.0     # segundos de marcha, y despues todo quieto
-const INTRO_VEL := 12.0       # m/s
-const INTRO_LARGO := INTRO_MARCHA * INTRO_VEL   # lo que hay que tener despejado
-const INTRO_RUMBOS := 16      # cuantas direcciones prueba alrededor del tee
-const INTRO_PASO := 8.0       # cada cuanto comprueba el camino
-const INTRO_ANCHO := 8.0      # banda libre a los lados: camioneta y camara
-const INTRO_DESNIVEL := 3.0   # cuanto puede subir o bajar el terreno
-const INTRO_BOTE := 0.04      # cuanto bota la suspension
-const INTRO_JAULA := 0.55     # la jaula, escalada para caber en la caja
-const INTRO_JAULA_POS := Vector3(0.0, 1.05, -1.6)   # sobre la caja
-const INTRO_CAM := Vector3(7.0, 2.4, -1.0)          # en ejes de la camioneta
-# ------------------------
 const JAULA := "res://escenas/Jaula.tscn"
+# La portada tapa la pantalla desde el primer fotograma: montar el mapa y su
+# colision lleva segundos y hasta ahora se veia el vacio mientras carga.
+const PORTADA := "res://ui/portada.png"
+const CARGA_MIN := 5.0        # segundos minimos, aunque cargue antes
 # El portazo tiene dos tiempos: el piche la EMPUJA y ella cede, y despues se
 # suelta y termina de caer sola. Para que se vea empujada hay que frenar
 # tambien al piche: a 22 m/s la puerta tendria que girar a 129 rad/s para
@@ -139,25 +110,15 @@ var _ultimo := 0.0        # distancia del ultimo golpe, para el aviso
 var _diam_bola := 1.0     # tamano del modelo tal cual viene, en sus unidades
 var _caja_bola := AABB()
 var stamina := STAMINA_MAX
-var _ancla := Vector3.ZERO               # centro del circulo en el que se anda
-var _limite: MeshInstance3D
 var _jaula: Node3D            # escenas/Jaula.tscn
-var _intro := false           # lo enciende _montar_intro y lo apaga la G
-var _camioneta: Node3D
-var _t_intro := 0.0
-var _dir_intro := Vector3.FORWARD
-var _t_aviso := 0.0           # el titileo del aviso sigue con todo parado
 var _portada: CanvasLayer
 var _t_arranque := 0
-var _vel_camioneta := Vector3.ZERO
-var _pos_camioneta := Vector3.ZERO   # clavada ahi: la que se mueve es el campo
-var _pulso_intro := false
-var _polvo: CPUParticles3D
 var _empujando := false       # el piche esta abriendo la puerta a empujones
 var _portazo := 1.0           # que fraccion de su velocidad lleva mientras
 var _vel_portazo := Vector3.ZERO   # el disparo entero, congelado en el impacto
 var _pulso_salto := false     # para detectar el flanco del espacio
-var _saltando := false        # brinco en curso: sin correa y sin soltar el mando
+var _saltando := false        # brinco en curso: sin soltar el mando
+var _vel_andar := 0.0         # velocidad de _conducir(): solo sube con mando, nunca con el terreno
 var _angulo_rueda := 0.0                 # cuanto lleva rodado
 var _eje_rueda := Vector3.RIGHT          # el eje del disco: su cara plana
 var _dir_rueda := Vector3.FORWARD
@@ -217,7 +178,6 @@ func _ready() -> void:
 	add_child(entorno)
 
 	_crear_bola()
-	_crear_limite()
 	_crear_ui()
 
 	golpe = $Golpe
@@ -227,6 +187,7 @@ func _ready() -> void:
 	campo = Campo.new()
 	add_child(campo)
 	campo.excluir = [bola.get_rid()]
+	golpe.campo = campo   # para que el rayo de colision de la camara no pise la jaula
 	msg.text = "Cargando el campo..."
 	await campo.preparar()
 	msg.text = ""
@@ -234,12 +195,31 @@ func _ready() -> void:
 	golpe.suelo = Callable(campo, "altura_terreno")
 	_ir_a_hoyo(0)
 	listo = true
-	# la intro se monta DESPUES de las comprobaciones: mientras corren, la jaula
-	# tiene que estar plantada en el tee, que es lo que ellas miran
 	await _self_check()
-	_montar_intro()
-	_probar_intro()
 	await _quitar_portada()
+
+
+func _crear_portada() -> void:
+	_portada = CanvasLayer.new()
+	_portada.layer = 100
+	var img := TextureRect.new()
+	img.texture = load(PORTADA)
+	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	img.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_portada.add_child(img)
+	add_child(_portada)
+
+
+## Se va cuando el mapa esta listo Y han pasado CARGA_MIN segundos: si la
+## maquina carga rapido, la portada igual se ve el rato que tiene que verse.
+func _quitar_portada() -> void:
+	var lleva := (Time.get_ticks_msec() - _t_arranque) / 1000.0
+	if lleva < CARGA_MIN:
+		await get_tree().create_timer(CARGA_MIN - lleva).timeout
+	var t := create_tween()
+	t.tween_property(_portada.get_child(0), "modulate:a", 0.0, 0.5)
+	t.tween_callback(_portada.queue_free)
 
 
 func _crear_bola() -> void:
@@ -357,8 +337,6 @@ func _montar_jaula() -> void:
 		_jaula.queue_free()   # la bisagra y la puerta cuelgan de ella
 	Engine.time_scale = 1.0     # por si se cambia de hoyo en pleno portazo
 	golpe.fin_cine()
-	if is_instance_valid(_camioneta):
-		_camioneta.queue_free()   # la del hoyo 1 ya cumplio
 	_jaula = (load(JAULA) as PackedScene).instantiate()
 	add_child(_jaula)
 	var t := campo.pos_tee()
@@ -373,59 +351,6 @@ func _montar_jaula() -> void:
 	# techo de la jaula y la bola se coloca dos metros mas arriba
 	campo.excluir = [bola.get_rid()]
 	campo.excluir.append_array(_jaula.cuerpos())
-
-
-func _crear_limite() -> void:
-	_limite = MeshInstance3D.new()
-	_limite.mesh = ImmediateMesh.new()
-	var m := Util.mat(Color.WHITE)
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED   # se mira desde arriba y de lado
-	_limite.material_override = m
-	_limite.top_level = true
-	add_child(_limite)
-
-
-## Fija el centro del circulo donde esta la bola y redibuja el borde.
-func _anclar() -> void:
-	_ancla = bola.global_position
-	# se muestrea en anillos concentricos y se cosen entre si: pintar un solo
-	# disco plano se hundiria en cuanto el terreno tuviera algo de pendiente
-	var aros: Array[PackedVector3Array] = []
-	for k in ANILLOS + 1:
-		var r := RADIO_ANDAR * k / float(ANILLOS)
-		var aro := PackedVector3Array()
-		for i in PASOS_LIMITE:
-			var a := TAU * i / PASOS_LIMITE
-			var x := _ancla.x + cos(a) * r
-			var z := _ancla.z + sin(a) * r
-			# el rayo cae desde un metro sobre la bola, no desde el cielo: asi
-			# no puede pegar en la copa de un arbol y dejar un vertice quince
-			# metros arriba, que convertia el area en un telon rojo. El acotado
-			# se queda por si el rayo no encuentra nada.
-			# si el rayo sale de un numero raro -arranca dentro de una roca y no
-			# encuentra nada- se deja plano. Acotarlo levantaba un muro rojo de
-			# un metro justo donde el terreno se pone dificil.
-			var h := campo.altura_terreno(x, z, _ancla.y + 1.0)
-			if absf(h - _ancla.y) > 1.2:
-				h = _ancla.y
-			aro.push_back(Vector3(x, h + 0.08, z))
-		aros.append(aro)
-
-	var im: ImmediateMesh = _limite.mesh
-	im.clear_surfaces()
-	im.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
-	for k in ANILLOS:
-		for i in PASOS_LIMITE:
-			var j := (i + 1) % PASOS_LIMITE
-			im.surface_add_vertex(aros[k][i])
-			im.surface_add_vertex(aros[k + 1][i])
-			im.surface_add_vertex(aros[k + 1][j])
-			im.surface_add_vertex(aros[k][i])
-			im.surface_add_vertex(aros[k + 1][j])
-			im.surface_add_vertex(aros[k][j])
-	im.surface_end()
 
 
 func _crear_ui() -> void:
@@ -481,8 +406,6 @@ func _crear_ui() -> void:
 func _ir_a_hoyo(i: int) -> void:
 	_marcas.clear()
 	campo.ir_a(i)
-	for g in campo.pateadores:
-		g.pateado.connect(_on_pateado)
 	golpe.reset(campo.pos_tee(), campo.pos_bandera())
 	golpe.viento = campo.viento()
 	stamina = STAMINA_MAX
@@ -500,6 +423,7 @@ func _poner_bola(donde: Vector3) -> void:
 	bola.angular_damp = 0.6
 	quieto = true
 	_saltando = false
+	_vel_andar = 0.0
 	_en_aire = false
 	_giro = 0.0
 	estela.emitting = false
@@ -509,7 +433,6 @@ func _poner_bola(donde: Vector3) -> void:
 	_portazo = 1.0
 	_mira_rueda = golpe.mira  # que no arranque girando por la diferencia con la mira anterior
 	_aplicar_damp()
-	_anclar()
 
 
 func _aplicar_damp() -> void:
@@ -523,24 +446,6 @@ func _drop() -> void:
 	golpes += PENA_DROP
 	_poner_bola(bola.global_position + Vector3(randf_range(-2, 2), 0, randf_range(-2, 2)))
 	_aviso("Drop  +%d" % PENA_DROP, 1.0)
-
-
-## Un pateador lo mando volando. Es gratis: ni cuesta golpe ni gasta stamina,
-## que es lo que los hace valer la pena buscarlos en vez de esquivarlos.
-func _on_pateado(velocidad: Vector3) -> void:
-	if embocada or _intro or not listo:
-		return
-	_desde = bola.global_position
-	_aire = AIRE_TIEMPO
-	_giro = 0.0
-	_t_lento = 0.0
-	_t_caida = 0.0
-	_golpe_volo = false
-	_saltando = false
-	quieto = false
-	bola.freeze = false
-	bola.linear_velocity = velocidad
-	_aviso("Patada!", 0.9)
 
 
 func _on_golpeado(velocidad: Vector3) -> void:
@@ -560,15 +465,7 @@ func _on_golpeado(velocidad: Vector3) -> void:
 func _process(dt: float) -> void:
 	if not listo:
 		return
-
-	if _intro:
-		_mover_intro(dt)
-		var g := Input.is_key_pressed(KEY_G) or Input.is_joy_button_pressed(0, JOY_BUTTON_A)
-		if g and not _pulso_intro:
-			_arrancar()
-		_pulso_intro = g
-		return
-	golpe.activo = quieto and not embocada and not _intro
+	golpe.activo = quieto and not embocada
 	# desde el rough se controla peor: el mismo dato que retiene el efecto
 	golpe.estabilidad = campo.retiene_efecto(campo.zona(
 		bola.global_position.x, bola.global_position.z))
@@ -588,12 +485,7 @@ func _process(dt: float) -> void:
 		_saltar()
 	_pulso_salto = salta
 
-	# el suelo es rojizo siempre, que es lo que marca el area; se satura cuando
-	# ya no queda para el impulso. El verde/rojo de la stamina vive en su barra.
 	var hay := stamina >= STAMINA_MIN
-	_limite.visible = golpe.activo and not _enjaulado()
-	_limite.material_override.albedo_color = (Color(0.85, 0.25, 0.20, 0.26)
-		if hay else Color(1.0, 0.18, 0.12, 0.42))
 	barra_stam.value = stamina
 	barra_stam.modulate = Color(0.45, 1.0, 0.55) if hay else Color(1.0, 0.4, 0.35)
 
@@ -625,7 +517,7 @@ func _process(dt: float) -> void:
 
 
 func _physics_process(dt: float) -> void:
-	if not listo or embocada or _intro:
+	if not listo or embocada:
 		return
 
 	# el golpe se aplica aqui: descongelar y empujar en el mismo tick de fisica
@@ -639,10 +531,9 @@ func _physics_process(dt: float) -> void:
 		return
 
 	if quieto:
-		_conducir()
+		_conducir(dt)
 		if _saltando:
 			_aterrizar()
-		_atar()
 		# tambien vale meterlo rodando: es la parte de "llevalo tu" de SBG
 		if campo.embocada(bola.global_position):
 			_embocar()
@@ -715,229 +606,23 @@ func _physics_process(dt: float) -> void:
 			bola.angular_velocity = Vector3.ZERO
 			bola.freeze = true
 			quieto = true
+			_vel_andar = 0.0
 			_ultimo = Vector2(pos.x - _desde.x, pos.z - _desde.z).length()
 			if _enjaulado():
 				# por si el impulso no llego a tocarla: siempre la tira, o el
 				# jugador se quedaria encerrado gastando golpes
 				_jaula.tirar_puerta(PORTAZO_EMPUJE, PORTAZO_SUELTA)
 				_jaula.abrir()
-			_anclar()
 			_aviso("%d m" % roundi(_ultimo), 1.6)
 	else:
 		_t_lento = 0.0
 		_t_caida = 0.0
 
 
-## La portada tapa la pantalla desde el primer fotograma. El campo son 81 MB y
-## montarle la colision lleva lo suyo: sin esto se veia el vacio mientras carga.
-func _crear_portada() -> void:
-	_portada = CanvasLayer.new()
-	_portada.layer = 100
-	var img := TextureRect.new()
-	img.texture = load(PORTADA)
-	img.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	img.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	img.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_portada.add_child(img)
-	add_child(_portada)
-
-
-## Se va cuando el campo esta listo Y han pasado CARGA_MIN segundos: si la
-## maquina carga rapido, la portada igual se ve el rato que tiene que verse.
-func _quitar_portada() -> void:
-	var lleva := (Time.get_ticks_msec() - _t_arranque) / 1000.0
-	if lleva < CARGA_MIN:
-		await get_tree().create_timer(CARGA_MIN - lleva).timeout
-	var t := create_tween()
-	t.tween_property(_portada.get_child(0), "modulate:a", 0.0, 0.5)
-	t.tween_callback(_portada.queue_free)
-
-
-## Monta la escena de inicio: la camioneta, y la jaula del hoyo 1 subida a la
-## caja. La jaula pierde la colision mientras viaja -la bola va puesta a mano,
-## no la sostienen los muros- y moverle siete cuerpos estaticos cada fotograma
-## seria darle trabajo al servidor de fisica para nada.
-func _montar_intro() -> void:
-	_intro = true
-	_camioneta = (load(CAMIONETA) as PackedScene).instantiate()
-	add_child(_camioneta)
-	var disco := _camioneta.find_child("Circle_4", true, false)
-	if disco:
-		disco.queue_free()      # el disco de exhibicion de Sketchfab
-
-	_jaula.colision(false)
-	_jaula.get_parent().remove_child(_jaula)
-	_camioneta.add_child(_jaula)
-	_jaula.position = INTRO_JAULA_POS
-	# La puerta mira al porton trasero, como en la portada: la camioneta avanza
-	# en su +Z, asi que el +X de la jaula -por donde esta la puerta- tiene que
-	# caer en el -Z de la camioneta. De ahi sale el piche al apretar G.
-	_jaula.rotation = Vector3(0, PI / 2.0, 0)
-	_jaula.scale = Vector3.ONE * INTRO_JAULA
-
-	# polvo detras: las ruedas son parte de la misma malla y no giran, asi que
-	# el movimiento hay que contarlo con el suelo pasando, el bote y esto
-	_dir_intro = _rumbo_despejado()
-	_pos_camioneta = campo.pos_tee()
-	_polvo = Util.particulas(Color(0.78, 0.72, 0.60, 0.7), 0.9, 30)
-	_polvo.one_shot = false
-	_polvo.explosiveness = 0.0
-	_polvo.emitting = true
-	_polvo.position = Vector3(0, 0.2, 2.4)
-	_camioneta.add_child(_polvo)
-
-	hud.visible = false
-	barra.visible = false
-	barra_stam.visible = false
-	# el area y la linea de mira: sus banderas se ponen en _process, y la intro
-	# corta antes de llegar ahi. El area se quedaba blanca tapando media
-	# camioneta, y la mira dibujaba su linea amarilla cruzando el encuadre.
-	_limite.visible = false
-	golpe.activo = false
-	# si la G viene apretada de antes, que no cuente: hay que soltarla y volver
-	# a apretarla, o la intro se saltaria sola en el primer fotograma
-	_pulso_intro = true
-	# el aviso, abajo y en rojo: centrado se comia la camioneta, y titilando se
-	# ve que hay que hacer algo en vez de quedarse mirando la camioneta
-	msg.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM,
-		Control.PRESET_MODE_MINSIZE, 130)
-	msg.add_theme_color_override("font_color", Color(1.0, 0.18, 0.15))
-	msg.text = "APRETA G PARA SALIR"
-
-
-## Recta por la calle. Lo unico que hace falta es que se LEA como movimiento:
-## la camioneta y la jaula quietas en el encuadre y el campo pasando al lado,
-## mas el bote de la suspension y el polvo. Las ruedas son parte de la misma
-## malla y no giran, asi que el resto tiene que contarlo.
-func _mover_intro(dt: float) -> void:
-	# el titileo corre siempre, tambien con todo parado: es lo unico que se
-	# mueve mientras espera, y es justo lo que tiene que mirar el jugador
-	_t_aviso += dt
-	msg.modulate.a = 0.35 + 0.65 * absf(sin(_t_aviso * 3.4))
-
-	if _t_intro < INTRO_MARCHA:
-		_t_intro = minf(_t_intro + dt, INTRO_MARCHA)
-		# lo que se mueve es el CAMPO, en sentido contrario. La camioneta no se
-		# mueve del tee: asi no hay forma de que se meta en un arbol ni se suba
-		# a una loma, y en pantalla se lee igual porque la camara la sigue.
-		campo.position = -_dir_intro * _t_intro * INTRO_VEL
-		var t := _pos_camioneta
-		# el suelo que va pasando por debajo: el rayo cae desde justo encima,
-		# que desde el cielo pega en la copa de un arbol
-		t.y = campo.altura_terreno(t.x, t.z, _camioneta.global_position.y + 3.0)
-		_camioneta.global_position = t + Vector3.UP * sin(_t_intro * 26.0) * INTRO_BOTE
-		_camioneta.rotation = Vector3(0, atan2(_dir_intro.x, _dir_intro.z),
-			sin(_t_intro * 19.0) * 0.02)
-		if _t_intro >= INTRO_MARCHA:
-			_polvo.emitting = false   # frena: se acabo el polvo
-	_vel_camioneta = _dir_intro * INTRO_VEL
-
-	# la bola viaja dentro de la jaula, puesta a mano
-	bola.global_position = _jaula.global_transform * Vector3(0, 0.12, 0)
-	_escalar_vista(camara.global_position.distance_to(bola.global_position), dt)
-	# la camara acompana desde el costado, en ejes de la camioneta
-	golpe.cine_offset = _camioneta.global_basis * INTRO_CAM
-	if not golpe.cine:
-		golpe.cortar_a(golpe.cine_offset)
-
-
-## Aprieta G: la jaula se baja de la camioneta (si siguiera colgando de ella el
-## portazo giraria con la camioneta), el piche sale con la velocidad del tiro
-## MAS la que lleva el vehiculo, y de ahi manda la cinematica de siempre.
-func _arrancar() -> void:
-	_intro = false
-	# El campo vuelve a su sitio de una vez, y con el cambia el suelo bajo la
-	# camioneta: durante la intro estaba apoyada sobre el terreno que iba
-	# pasando, asi que al saltar de golpe se quedaba enterrada. Como no se
-	# movio del tee, su altura buena es justo la del tee. La jaula todavia
-	# cuelga de ella, asi que sube con la camioneta antes de soltarse.
-	campo.position = Vector3.ZERO
-	_camioneta.global_position = _pos_camioneta
-	msg.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
-	msg.remove_theme_color_override("font_color")
-	msg.modulate.a = 1.0
-	msg.text = ""
-	hud.visible = true
-	barra.visible = true
-	barra_stam.visible = true
-
-	var t := _jaula.global_transform
-	_camioneta.remove_child(_jaula)
-	add_child(_jaula)
-	_jaula.global_transform = t
-	_polvo.emitting = false
-
-	var fuera := _jaula.global_basis.x
-	fuera.y = 0.0
-	fuera = fuera.normalized()
-	golpe.mira = atan2(fuera.x, fuera.z)
-	golpe.fuerza = 1.0
-	var salida: Vector3 = golpe.direccion() * golpe.velocidad() + _vel_camioneta
-	golpe.fuerza = 0.0
-
-	golpes += 1
-	stamina = maxf(0.0, stamina - STAMINA_IMPULSO)
-	_desde = bola.global_position
-	_aire = AIRE_TIEMPO
-	_giro = 0.0
-	_t_lento = 0.0
-	_t_caida = 0.0
-	_golpe_volo = false
-	quieto = false
-	bola.freeze = false
-	bola.linear_velocity = salida
-	_reventar_puerta(fuera)
-
-
-## Por donde puede circular sin tropezarse: prueba rumbos alrededor del tee y
-## se queda con el que aguante mas metros con el suelo parejo y nada encima.
-func _rumbo_despejado() -> Vector3:
-	var t := campo.pos_tee()
-	var mejor := Vector3(sin(golpe.mira), 0.0, cos(golpe.mira))
-	var mejor_largo := -1.0
-	for i in INTRO_RUMBOS:
-		var a := TAU * i / INTRO_RUMBOS
-		var dir := Vector3(sin(a), 0.0, cos(a))
-		var lado := Vector3.UP.cross(dir)
-		var largo := 0.0
-		while largo < INTRO_LARGO and _despejado(t + dir * (largo + INTRO_PASO), lado, t.y):
-			largo += INTRO_PASO
-		if largo > mejor_largo:
-			mejor_largo = largo
-			mejor = dir
-	print("intro: rumbo %d grados, %d m despejados" % [
-		roundi(rad_to_deg(atan2(mejor.x, mejor.z))), roundi(mejor_largo)])
-	return mejor
-
-
-## Suelo parejo y nada por encima, en una banda del ancho de la camioneta mas
-## la camara. El truco para saber si hay copa: el rayo desde el cielo para en
-## lo PRIMERO que encuentra, y el que cae desde justo sobre el suelo no. Si dan
-## distinto, lo que hay en medio es follaje.
-func _despejado(centro: Vector3, lado: Vector3, y0: float) -> bool:
-	for k in [0.0, -INTRO_ANCHO, INTRO_ANCHO]:
-		var q: Vector3 = centro + lado * k
-		var suelo := campo.altura_terreno(q.x, q.z, y0 + 3.0)
-		if absf(suelo - y0) > INTRO_DESNIVEL:
-			return false
-		if campo.altura_terreno(q.x, q.z) > suelo + 1.5:
-			return false
-	return true
-
-
-## La jaula tiene que acabar en la caja, y la bola dentro de la jaula.
-func _probar_intro() -> void:
-	_mover_intro(1.0 / 60.0)
-	assert(_jaula.get_parent() == _camioneta, "la jaula no viaja en la camioneta")
-	var d := bola.global_position.distance_to(_jaula.global_position)
-	print("intro: jaula en la caja, bola a %.2f m de su base" % d)
-	assert(d < 1.0, "la bola no viaja dentro de la jaula")
-
-
 ## El stick izquierdo rueda el piche mientras esta parado. En el aire ese mismo
-## stick es el timon, asi que no se pisan. El tope de velocidad es lo que separa
-## andar de pegar: para cruzar el campo hay que golpear.
-func _conducir() -> void:
+## stick es el timon, asi que no se pisan. CONDUCE_MAX topa la velocidad de
+## andar; para cruzar el campo de verdad hay que golpear.
+func _conducir(dt: float) -> void:
 	var dir: Vector3 = golpe.mando()
 	if dir == Vector3.ZERO:
 		# sin mando no se mueve nada. Si quedo descongelada de un empujon
@@ -947,49 +632,32 @@ func _conducir() -> void:
 		#
 		# En pleno brinco no: el salto no saca de "quieto", asi que soltar el
 		# stick en el aire dejaba al piche congelado a media altura.
+		_vel_andar = 0.0
 		if not bola.freeze and not _saltando:
 			bola.linear_velocity = Vector3.ZERO
 			bola.angular_velocity = Vector3.ZERO
 			bola.freeze = true
 		return
-	if Vector3(bola.linear_velocity.x, 0, bola.linear_velocity.z).length() > CONDUCE_MAX:
-		return
-	# la correa: andando no se sale del circulo. En el borde se deja empujar
-	# hacia dentro, si no se quedaria pegado al limite sin poder volver.
-	var fuera := Vector2(bola.global_position.x - _ancla.x,
-		bola.global_position.z - _ancla.z)
-	if not _saltando and fuera.length() >= RADIO_ANDAR \
-			and Vector2(dir.x, dir.z).dot(fuera.normalized()) > 0.0:
-		return
 	bola.freeze = false      # congelada no admite fuerzas
-	# que una pendiente no desvie el rumbo: se descarta la parte de la
-	# velocidad que no va en la linea de "dir" (adelante/atras), que es lo
-	# unico que el jugador esta pidiendo. Sin esto, en una bajada la
-	# gravedad la iba corriendo de costado aunque se empujara derecho.
+	# la velocidad de andar la lleva ESTA variable, no lo que traiga ya
+	# bola.linear_velocity: si se leyera de ahi, una pendiente le sumaria
+	# tirón propio (gravedad ladera abajo) y el piche se moveria solo con
+	# el mando quieto o incluso soltado a medias, que es justo lo que no
+	# tiene que pasar. Aqui solo sube si hay mando, con la propia
+	# aceleracion de andar, y nunca por fisica del terreno.
+	_vel_andar = minf(CONDUCE_MAX, _vel_andar + CONDUCE_ACEL * dt)
 	var recta := dir.normalized()
-	var horizontal := Vector3(bola.linear_velocity.x, 0, bola.linear_velocity.z)
-	bola.linear_velocity = recta * horizontal.dot(recta) + Vector3.UP * bola.linear_velocity.y
-	bola.apply_central_force(dir * CONDUCE_ACEL * Util.MASA)
+	bola.linear_velocity = recta * _vel_andar + Vector3.UP * bola.linear_velocity.y
 
 
-## Andando no se sale del circulo. No basta con dejar de empujar: con la
-## inercia se cruzaba igual. Se le quita la velocidad que apunta hacia fuera y
-## se le devuelve al borde.
-##
-## ponytail: mover un cuerpo rigido a mano fuera de _integrate_forces no es lo
-## fino, pero aqui son centimetros y solo en el borde. Si diera guerra, lo suyo
-## seria un muro de colision cilindrico que se mueve con el ancla.
-## El salto (espacio) despega con lo que ya lleve encima y sirve para salir del
-## area: mientras esta en el aire no hay correa, y al caer se ancla donde quede.
-##
-## No toca `quieto`. Sacar la bola de ese estado la metia por el camino del
-## golpe: la camara se iba atras, el area desaparecia y al caer salia el aviso
-## de distancia. O sea que un brinco se veia igual que un impulso y cortaba el
-## juego. Aqui se sigue andando, solo que por el aire.
+## El salto (espacio) despega con lo que ya lleve encima. No toca `quieto`:
+## sacar la bola de ese estado la metia por el camino del golpe -la camara se
+## iba atras y al caer salia el aviso de distancia-, asi que un brinco se veia
+## igual que un impulso y cortaba el juego. Aqui se sigue andando, solo que
+## por el aire.
 func _saltar() -> void:
-	if _saltando or not (listo and quieto and not embocada) or stamina < STAMINA_SALTO:
+	if _saltando or not (listo and quieto and not embocada):
 		return
-	stamina -= STAMINA_SALTO
 	_saltando = true
 	bola.freeze = false      # congelada no admite ni fuerzas ni velocidad
 	bola.linear_velocity += Vector3.UP * IMPULSO_SALTO
@@ -1033,13 +701,12 @@ func _cine_portazo() -> void:
 	golpe.fin_cine()
 
 
-## Cierra el brinco al tocar suelo bajando, y ancla el area donde haya caido.
+## Cierra el brinco al tocar suelo bajando.
 func _aterrizar() -> void:
 	var p := bola.global_position
 	if bola.linear_velocity.y > 0.0 or p.y > campo.altura_terreno(p.x, p.z) + Util.RADIO + 0.06:
 		return
 	_saltando = false
-	_anclar()
 
 
 ## La puerta sigue en pie: la salida esta tapada.
@@ -1047,32 +714,15 @@ func _enjaulado() -> bool:
 	return is_instance_valid(_jaula) and _jaula.cerrada()
 
 
-## Otra pregunta distinta de _enjaulado(): esa mira si la puerta sigue puesta,
-## que es lo que ata la correa. Esta mira si el piche sigue entre los barrotes,
-## que es lo que aparta la camara. Al caer la puerta la jaula sigue ahi, y sin
-## esto la camara se metia dentro a mirar los barrotes.
+## Otra pregunta distinta de _enjaulado(): esa mira si la puerta sigue puesta.
+## Esta mira si el piche sigue entre los barrotes, que es lo que aparta la
+## camara. Al caer la puerta la jaula sigue ahi, y sin esto la camara se metia
+## dentro a mirar los barrotes.
 func _en_la_jaula() -> bool:
 	if not is_instance_valid(_jaula):
 		return false
 	return Vector2(bola.global_position.x - _jaula.global_position.x,
 		bola.global_position.z - _jaula.global_position.z).length() < 1.8
-
-
-func _atar() -> void:
-	# brincar es como se sale del area; de la jaula sacan los muros, no esto
-	if _saltando:
-		return
-	var d := Vector2(bola.global_position.x - _ancla.x,
-		bola.global_position.z - _ancla.z)
-	if d.length() <= RADIO_ANDAR:
-		return
-	var n := d.normalized()
-	var fuera := Vector3(n.x, 0, n.y)
-	var salida := bola.linear_velocity.dot(fuera)
-	if salida > 0.0:
-		bola.linear_velocity -= fuera * salida
-	bola.global_position = Vector3(_ancla.x + n.x * RADIO_ANDAR,
-		bola.global_position.y, _ancla.z + n.y * RADIO_ANDAR)
 
 
 func _marca(pos: Vector3, v: float) -> void:
@@ -1242,18 +892,8 @@ func _self_check() -> void:
 	assert(absf(campo.altura_terreno(bola.global_position.x, bola.global_position.z)
 		- (bola.global_position.y - Util.RADIO)) < 0.2,
 		"la jaula tapa los rayos de altura")
-	# la correa: se le empuja lejos y tiene que volver al borde de la que toque
 	var vuelve := bola.global_position
-	bola.global_position = vuelve + Vector3(RADIO_ANDAR * 3.0, 0, 0)
-	bola.linear_velocity = Vector3(9.0, 0, 0)
-	_atar()
-	assert(Vector2(bola.global_position.x - _ancla.x,
-		bola.global_position.z - _ancla.z).length() <= RADIO_ANDAR + 0.001,
-		"el piche se sale de la correa")
-	assert(bola.linear_velocity.x <= 0.001, "no se le quita la velocidad de salida")
-	bola.global_position = vuelve
-	bola.linear_velocity = Vector3.ZERO
-	# y sin stamina no hay impulso
+	# sin stamina no hay impulso
 	var stamina_previa := stamina
 	stamina = 0.0
 	golpe.puede_saltar = false
@@ -1263,14 +903,15 @@ func _self_check() -> void:
 	assert(_v_pendiente == Vector3.ZERO, "salio impulso sin stamina")
 	stamina = stamina_previa
 	golpe.puede_saltar = true
-	# el salto despega, cobra, y no saca a la bola del estado de andar: si lo
-	# hiciera, un brinco se veria como un impulso
+	# el salto despega gratis (no gasta stamina) y no saca a la bola del
+	# estado de andar: si lo hiciera, un brinco se veria como un impulso
 	var stamina_salto := stamina
 	_saltar()
 	assert(bola.linear_velocity.y > 0.0, "el salto no despega")
-	assert(stamina == stamina_salto - STAMINA_SALTO, "el salto no cobra stamina")
+	assert(stamina == stamina_salto, "el salto gasta stamina")
 	assert(quieto and golpe.activo, "el salto corta el estado de andar")
-	assert(_saltando, "el salto no levanta la correa")
+	assert(_saltando, "el salto no queda marcado como brinco")
+	bola.global_position = vuelve
 	bola.linear_velocity = Vector3.ZERO
 	bola.freeze = true
 	_saltando = false
@@ -1301,4 +942,8 @@ func _self_check() -> void:
 		print("primer impulso: puerta abajo y la bola sale a %.2f m de la jaula" % d)
 		assert(not _jaula.puerta_entera(), "el primer impulso no tiro la puerta")
 		assert(not _jaula.cerrada(), "el hueco no quedo abierto")
-		assert(d > 2.0, "el impulso revento la puerta pero no atraveso el hueco")
+		# que SALIO de la jaula, no cuantos metros: la media diagonal de la jaula
+		# es 1.41, asi que por encima de eso ya esta fuera. Cuanto recorra
+		# despues depende del mapa -en el muelle hay un galpon a dos pasos- y
+		# eso no es cosa de esta comprobacion.
+		assert(d > 1.45, "el impulso revento la puerta pero no salio")
