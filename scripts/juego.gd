@@ -16,6 +16,9 @@ const MAX_MARCAS := 30
 # --- direccion en el aire (SBG) ---
 const AIRE_ACEL := 11.0     # m/s2 laterales mientras se dirige
 const AIRE_TIEMPO := 1.1    # segundos de timon por golpe
+# --- rodar el piche con el mando ---
+const CONDUCE_ACEL := 7.0   # m/s2 que mete el stick izquierdo
+const CONDUCE_MAX := 4.5    # m/s: es andar, no un golpe
 # --- puntos (SBG puntua, no cuenta golpes) ---
 const PUNTOS_HOYO := 100
 const PUNTOS_GOLPE := 25    # lo que vale cada golpe ahorrado sobre el par
@@ -23,7 +26,7 @@ const PUNTOS_GOLPE := 25    # lo que vale cada golpe ahorrado sobre el par
 # modo que ocupe SIEMPRE la misma fraccion de la pantalla, calculada con el fov
 # y la distancia reales de la camara. La colision sigue siendo la esfera de 4 cm.
 const MODELO_BOLA := "res://modelos/PicheLowHighTest07.fbx"
-const VISTA_PANTALLA := 0.075   # subelo y el piche se ve mas grande
+const VISTA_PANTALLA := 0.14    # subelo y el piche se ve mas grande
 # ----------------------------
 
 var indice := 0
@@ -333,6 +336,10 @@ func _physics_process(dt: float) -> void:
 		return
 
 	if quieto:
+		_conducir()
+		# tambien vale meterlo rodando: es la parte de "llevalo tu" de SBG
+		if campo.embocada(bola.global_position):
+			_embocar()
 		return
 
 	var pos := bola.global_position
@@ -381,6 +388,19 @@ func _physics_process(dt: float) -> void:
 			_aviso("%d m" % roundi(_ultimo), 1.6)
 	else:
 		_t_lento = 0.0
+
+
+## El stick izquierdo rueda el piche mientras esta parado. En el aire ese mismo
+## stick es el timon, asi que no se pisan. El tope de velocidad es lo que separa
+## andar de pegar: para cruzar el campo hay que golpear.
+func _conducir() -> void:
+	var dir: Vector3 = golpe.mando()
+	if dir == Vector3.ZERO:
+		return
+	if Vector3(bola.linear_velocity.x, 0, bola.linear_velocity.z).length() > CONDUCE_MAX:
+		return
+	bola.freeze = false      # congelada no admite fuerzas
+	bola.apply_central_force(dir * CONDUCE_ACEL * Util.MASA)
 
 
 func _marca(pos: Vector3, v: float) -> void:
@@ -453,5 +473,8 @@ func _self_check() -> void:
 		   roundi(Vector2(t.x - b.x, t.z - b.z).length()), campo.par()])
 	if DisplayServer.get_name() == "headless":
 		await get_tree().create_timer(0.5).timeout
+		golpe.activo = true      # soltar() sale de vacio si no hubo cargar()
+		golpe.cargar()
 		golpe.fuerza = 1.0
 		golpe.soltar()
+		assert(_v_pendiente != Vector3.ZERO, "el golpe no salio")

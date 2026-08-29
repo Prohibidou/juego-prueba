@@ -1,6 +1,6 @@
 extends Node3D
-## El swing: apuntado, potencia, palo con animacion y camara.
-## No conoce las reglas: cuando el jugador suelta, emite la velocidad de salida.
+## Apuntado, potencia, mando y camara. No conoce las reglas: cuando el jugador
+## suelta, emite la velocidad de salida; el stick izquierdo lo lee juego.gd.
 
 signal golpeado(velocidad: Vector3)
 
@@ -27,14 +27,14 @@ const TIMON_VUELVE := 2.0   # el arrastre se suelta solo al soltar el dedo
 # ----------------------------
 
 # --- camara ---
-const CAM_ALTO_TIRO := 1.7
-const CAM_ATRAS_TIRO := 3.2
+const CAM_ALTO_TIRO := 0.85
+const CAM_ATRAS_TIRO := 1.8
 # La camara se aleja y abre el angulo con la velocidad: encuadra igual un putt
 # que un drive, y el ensanchado del fov da la sensacion de velocidad.
-const CAM_ATRAS_MIN := 3.0
-const CAM_ATRAS_MAX := 7.5
-const CAM_ALTO_MIN := 1.0
-const CAM_ALTO_MAX := 2.8
+const CAM_ATRAS_MIN := 2.0
+const CAM_ATRAS_MAX := 5.5
+const CAM_ALTO_MIN := 0.7
+const CAM_ALTO_MAX := 2.0
 const CAM_FOV := 62.0
 const CAM_FOV_MAX := 74.0
 const CAM_VEL_REF := 55.0      # m/s a los que la camara esta del todo abierta
@@ -42,14 +42,12 @@ const CAM_SUAVIZADO := 14.0
 const CAM_FOV_SUAVIZADO := 4.0 # el fov va mas lento que la posicion: asi se nota
 # --------------
 
-# --- swing ---
-# El hombro manda: el palo cuelga de el y barre un plano inclinado que pasa por
-# la bola, en vez de girar en horizontal a su alrededor como un helicoptero.
-# El largo y la inclinacion salen de HOMBRO, asi que la cabeza cae SIEMPRE
-# sobre la bola con _swing = 0.
-const HOMBRO := Vector3(0.45, 0.95, 0)
-const BACKSWING := 2.6         # rad de subida a barra llena (~150 grados)
-const ACOMPANA := -2.4         # rad de acompanamiento tras el impacto
+# --- mando ---
+# Stick izquierdo: rueda el piche. Stick derecho: apunta. El boton de golpe ya
+# funciona solo, porque "ui_accept" incluye la A del mando por defecto.
+const ZONA_MUERTA := 0.2
+const APUNTA_GIRO := 1.6       # rad/s de mira con el stick derecho al tope
+const APUNTA_LOFT := 30.0      # grados/s de loft
 # -------------
 
 const LARGO_MIRA := 60.0    # metros de linea de apuntado
@@ -66,13 +64,8 @@ var suelo: Callable          # (x, z) -> altura del terreno
 
 var _bola: RigidBody3D
 var _camara: Camera3D
-var _pivote: Node3D          # en la bola, orientado a la mira
-var _plano: Node3D           # en el hombro: el palo barre su plano inclinado
 var _linea: MeshInstance3D
 var _cargando := false
-var _swing := 0.0            # angulo en el plano: >0 atras, 0 impacto, <0 acompanando
-var _animando := false       # el palo sigue visible aunque la bola ya salio
-var _pos_golpe := Vector3.ZERO
 var _dir_camara := Vector3.FORWARD
 var _timon_tactil := 0.0
 
@@ -80,21 +73,6 @@ var _timon_tactil := 0.0
 func preparar(bola: RigidBody3D, camara: Camera3D) -> void:
 	_bola = bola
 	_camara = camara
-
-	# el driver viene en centimetros, con el mastil sobre +Z y el origen en la
-	# cabeza: se pone en pie (+Z -> +Y) colgando del hombro
-	_pivote = Node3D.new()          # en la bola, orientado a la mira
-	_plano = Node3D.new()           # en el hombro, inclinado: el plano de swing
-	_plano.position = HOMBRO
-	_plano.rotation.z = atan2(-HOMBRO.x, HOMBRO.y)
-	var mi := MeshInstance3D.new()
-	mi.mesh = load("res://modelos/driver.obj")
-	mi.scale = Vector3.ONE * 0.01
-	mi.rotation.x = -PI / 2.0
-	mi.position = Vector3(0, -Vector2(HOMBRO.x, HOMBRO.y).length(), 0)
-	_plano.add_child(mi)
-	_pivote.add_child(_plano)
-	add_child(_pivote)
 
 	_linea = MeshInstance3D.new()
 	_linea.mesh = ImmediateMesh.new()
@@ -113,7 +91,6 @@ func reset(tee: Vector3, bandera: Vector3) -> void:
 	loft = 22.0
 	fuerza = 0.0
 	_cargando = false
-	_swing = 0.0
 
 
 func velocidad() -> float:
@@ -131,8 +108,6 @@ func soltar() -> void:
 		return
 	_cargando = false
 	var v := velocidad()
-	_pos_golpe = _bola.global_position
-	_animar_golpe()
 	# el error se sortea AQUI, no al apuntar: el jugador ve a donde apunto y
 	# entiende que se le fue por cargar de mas, no que la mira mienta
 	var e := dispersion()
@@ -161,22 +136,44 @@ func _process(dt: float) -> void:
 		cargar()
 	if _cargando:
 		fuerza = minf(1.0, fuerza + dt * CARGA_POR_SEG)
-		_swing = fuerza * BACKSWING  # cuanto mas cargas, mas atras sube el palo
 		if Input.is_action_just_released("ui_accept"):
 			soltar()
 	elif activo:
-		if Input.is_action_pressed("ui_left"): mira += dt * 1.0
-		if Input.is_action_pressed("ui_right"): mira -= dt * 1.0
-		if Input.is_action_pressed("ui_up"): loft = minf(LOFT_MAX, loft + dt * 25.0)
-		if Input.is_action_pressed("ui_down"): loft = maxf(LOFT_MIN, loft - dt * 25.0)
+		# teclas crudas y no ui_*: esas acciones llevan dentro el stick
+		# izquierdo, que aqui rueda al piche. En mando se apunta con el derecho.
+		if Input.is_key_pressed(KEY_LEFT): mira += dt * 1.0
+		if Input.is_key_pressed(KEY_RIGHT): mira -= dt * 1.0
+		if Input.is_key_pressed(KEY_UP): loft = minf(LOFT_MAX, loft + dt * 25.0)
+		if Input.is_key_pressed(KEY_DOWN): loft = maxf(LOFT_MIN, loft - dt * 25.0)
+		var ap := _stick(JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y)
+		mira -= ap.x * dt * APUNTA_GIRO
+		loft = clampf(loft - ap.y * dt * APUNTA_LOFT, LOFT_MIN, LOFT_MAX)
 
 	_timon_tactil = move_toward(_timon_tactil, 0.0, dt * TIMON_VUELVE)
 	timon = 0.0 if activo else clampf(
 		Input.get_axis("ui_left", "ui_right") + _timon_tactil, -1.0, 1.0)
 
-	_colocar_palo()
 	_dibujar_mira()
 	_mover_camara(dt)
+
+
+## Stick con zona muerta. ponytail: mando 0, el primero que haya conectado;
+## si hiciera falta multijugador local, aqui entraria el id del dispositivo.
+func _stick(eje_x: int, eje_y: int) -> Vector2:
+	var v := Vector2(Input.get_joy_axis(0, eje_x), Input.get_joy_axis(0, eje_y))
+	return Vector2.ZERO if v.length() < ZONA_MUERTA else v.limit_length(1.0)
+
+
+## Hacia donde empuja el stick izquierdo, girado a la camara y aplanado. Lo usa
+## juego.gd para rodar el piche; el largo del vector es cuanto se inclina.
+func mando() -> Vector3:
+	var v := _stick(JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y)
+	if v == Vector2.ZERO:
+		return Vector3.ZERO
+	var b := _camara.global_basis
+	var frente := Vector3(-b.z.x, 0.0, -b.z.z).normalized()
+	var lado := Vector3(b.x.x, 0.0, b.x.z).normalized()
+	return (lado * v.x - frente * v.y).limit_length(1.0)
 
 
 func direccion() -> Vector3:
@@ -209,29 +206,6 @@ func _dibujar_mira() -> void:
 		q.y = suelo.call(q.x, q.z) + 0.08
 		im.surface_add_vertex(q)
 	im.surface_end()
-
-
-func _colocar_palo() -> void:
-	# Mientras dura la animacion el palo se queda donde se pego. Antes se
-	# ocultaba en el mismo frame del golpe (activo pasa a false), asi que del
-	# swing no se veia nada: solo el palo desapareciendo de golpe.
-	_pivote.visible = activo or _animando
-	if not _pivote.visible:
-		return
-	_pivote.global_position = _bola.global_position if activo else _pos_golpe
-	_pivote.global_rotation = Vector3(0, mira, 0)
-	_plano.rotation.x = _swing
-
-
-## Bajada acelerando hasta el impacto (_swing = 0, la cabeza sobre la bola),
-## acompanamiento frenando y vuelta a la posicion de espera.
-func _animar_golpe() -> void:
-	_animando = true
-	var t := create_tween()
-	t.tween_property(self, "_swing", 0.0, 0.12).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	t.tween_property(self, "_swing", ACOMPANA, 0.30).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	t.tween_property(self, "_swing", 0.0, 0.50).set_trans(Tween.TRANS_SINE).set_delay(0.35)
-	t.finished.connect(func(): _animando = false)
 
 
 func objetivo_camara() -> Vector3:
@@ -271,8 +245,9 @@ func _mover_camara(dt: float) -> void:
 	var fov := CAM_FOV if activo else lerpf(CAM_FOV, CAM_FOV_MAX, _factor_velocidad())
 	_camara.fov = lerpf(_camara.fov, fov, _paso(CAM_FOV_SUAVIZADO, dt))
 	if activo:
-		# mirar por la linea de tiro, no a la bola: se ve a donde va el golpe
+		# adelantar la mirada por la linea de tiro, pero poco: con la camara
+		# pegada, mirar a 40 m dejaba al piche fuera de cuadro
 		var dir := Vector3(sin(mira), 0, cos(mira))
-		_camara.look_at(_bola.global_position + dir * 40.0 + Vector3.UP * 3.0)
+		_camara.look_at(_bola.global_position + dir * 5.0 + Vector3.UP * 0.5)
 	else:
 		_camara.look_at(_bola.global_position)
