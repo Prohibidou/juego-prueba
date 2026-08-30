@@ -27,15 +27,12 @@ var _origen := Vector3.ZERO
 var _escala := Vector3.ONE     # la del .tscn: reescribir `basis` se la lleva por delante
 var _reloj := 0.0
 var _mar: Mar = null
-var _previo := Vector3.ZERO    # posicion de MUNDO al empezar el tick
-var _actual := Vector3.ZERO
+var _empuje := Vector3.ZERO    # cuanto se movio en MUNDO este tick, ver empuje()
 
 
 func _ready() -> void:
 	_origen = position
 	_escala = scale
-	_previo = global_position
-	_actual = global_position
 	add_to_group("plataformas")
 
 
@@ -45,7 +42,17 @@ func flotar_en(mar: Mar) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	_previo = global_position
+	# el desplazamiento se mide en LOCAL (position, no global_position) y se
+	# lleva a mundo multiplicando por la base del padre -que no se mueve-, en
+	# vez de restar dos lecturas de global_position antes y despues de mover.
+	# Con physics_interpolation prendido (ver project.godot) global_position
+	# leida unas lineas despues de reescribir `position`, en el mismo tick, no
+	# reflejaba el cambio todavia -quedaba pisada por el valor de ANTES de
+	# mover, y con las dos lecturas iguales `empuje()` daba (0,0,0) siempre:
+	# el piche no se despegaba de la jaula pero tampoco viajaba con la chapa
+	# aunque el barrido (medido con `position` entre frames separados, no dos
+	# lecturas seguidas) probara que la plataforma si se mueve.
+	var previo := position
 	_reloj += delta
 	var ciclo := _reloj / periodo + fase
 	var p := _origen + eje.normalized() * amplitud * sin(ciclo * TAU)
@@ -67,11 +74,13 @@ func _physics_process(delta: float) -> void:
 			else Basis()).scaled(_escala)
 
 	position = p
-	_actual = global_position
+	var padre_actual := get_parent() as Node3D
+	var base_mundo := padre_actual.global_transform.basis if padre_actual != null else Basis()
+	_empuje = base_mundo * (p - previo)
 
 
 ## Cuanto se movio ESTE tick, en mundo. Quien se para encima se lo suma a su
 ## propia posicion: no se confia en que la friccion de sync_to_physics arrastre
 ## un piche de 4 cm, y ademas _conducir() lo congela al soltar el mando.
 func empuje() -> Vector3:
-	return _actual - _previo
+	return _empuje

@@ -718,8 +718,14 @@ func _apoyado() -> bool:
 func _sobre_plataforma() -> Node3D:
 	var esp := get_world_3d().direct_space_state
 	var desde := piche.global_position
+	# el margen cubre el valle del vaiven vertical y el rebote del asentado:
+	# con 0.15, mientras el piche aun no esta congelado flota milimetros sobre
+	# la chapa que baja, el rayo la perdia 24 de 90 frames y el arrastre se
+	# salteaba justo cuando la plataforma barre mas rapido (deriva de 0.60 m
+	# en 1.5 s, medido). No arrastra de mas: solo aplica si ADEMAS lo que hay
+	# abajo esta en el grupo "plataformas".
 	var q := PhysicsRayQueryParameters3D.create(
-		desde, desde + Vector3.DOWN * (Util.RADIO + 0.15))
+		desde, desde + Vector3.DOWN * (Util.RADIO + 0.45))
 	q.exclude = mapa.excluir
 	var hit := esp.intersect_ray(q)
 	if hit.is_empty():
