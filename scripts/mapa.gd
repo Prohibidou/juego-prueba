@@ -38,6 +38,14 @@ const MARGEN_META := 0.35      # fraccion del ancho que cuenta como "encima"
 # 0.45 solo valia subirse al techo; con esto vale la caja, que es donde se
 # sube, y sigue sin valer meterse debajo del chasis.
 const ALTURA_CAJA := 0.28
+# --- el mar ---
+# El glb del muelle trae una malla llamada asi, de 700 m de lado. Como todo
+# el mapa, se le genera colision: el piche no se hunde, cae ENCIMA del agua.
+# La altura se mide de su caja al montar el campo, no se clava a mano. Y OJO:
+# no vale para saber si algo esta mojado, porque el muelle esta construido a
+# nivel del agua -la salida sale a y=164.74 y el mar tambien-: para eso esta
+# hay_agua(), que mira que malla devuelve el rayo.
+const MAR := "Mar"             # nombre de la malla dentro del glb del mapa
 const VEL_SUBIDO := 6.0        # m/s por encima de los cuales va de paso
 # ---------------------------------------
 # Pieza provisional: es una escena para poder cambiarla por el modelo bueno
@@ -83,6 +91,7 @@ var _jaula_mapa := Transform3D.IDENTITY
 # El punto al que hay que llegar: el techo de la caja de la camioneta. Es lo
 # que mira la camara, lo que mide el HUD y hacia donde apunta la salida.
 var _punto_meta := Vector3.ZERO
+var _mar := NAN                 # altura de la superficie del agua; NAN si el mapa no trae mar
 var _techo := TECHO             # el de verdad lo mide preparar() con la caja del mapa
 var animales: Array = []
 var basura: Array = []
@@ -129,6 +138,11 @@ func preparar() -> void:
 
 	var n := 0
 	for m: MeshInstance3D in _mallas(_escenario):
+		if m.name == MAR:
+			# la superficie es el TECHO de su caja: la malla del agua tiene
+			# espesor y el piche se posa arriba, no en el medio
+			var cm: AABB = m.global_transform * m.get_aabb()
+			_mar = cm.position.y + cm.size.y
 		# El barco tambien va con trimesh. Se probo descomponerlo en cascos
 		# convexos (V-HACD, 32 cascos) por miedo a que el piche atravesara el
 		# casco fino, pero un convexo no puede tener huecos: los cascos
@@ -231,6 +245,30 @@ func trafo_jaula_mapa() -> Transform3D:
 	return _jaula_mapa
 
 
+## Altura de la superficie del agua, o NAN si este mapa no tiene mar.
+func altura_mar() -> float:
+	return _mar
+
+
+## Si lo que hay bajo (x, z) es el agua y no el muelle. Sirve para saber si el
+## piche cae al mar o sobre tablas, que no suenan igual.
+##
+## Se pregunta por la MALLA que devuelve el rayo, NO por la altura: un muelle se
+## construye justo en la linea del agua, y aqui la salida y la superficie del mar
+## estan los dos a y=164.74 clavados. Con un margen de altura, medio muelle era
+## agua. `create_trimesh_collision()` cuelga el cuerpo de la malla, asi que el
+## padre del colisionador es el MeshInstance3D y trae su nombre puesto.
+##
+## Solo el mapa del muelle trae "Mar": en un mapa sin agua _mar queda NAN y esto
+## siempre da false, asi que el chapuzon nunca suena ahi (ver sonido.gd).
+func hay_agua(x: float, z: float) -> bool:
+	if is_nan(_mar):
+		return false
+	var cuerpo := _colisionador(x, z)
+	var malla := cuerpo.get_parent() if cuerpo else null
+	return malla != null and malla.name == MAR
+
+
 ## Deja el mapa listo para jugarse: fija la salida, la meta y siembra. Se llama
 ## una vez, despues de preparar(); cambiar de mapa es cambiar de escena.
 func ir_a() -> void:
@@ -267,8 +305,10 @@ func altura_terreno(x: float, z: float, techo := INF) -> float:
 	return _punto_meta.y if is_inf(h) else h
 
 
-## Rayo hacia abajo, en crudo, resultado entero (posicion + rid del cuerpo).
-## Diccionario vacio si no pega en nada.
+## Rayo hacia abajo, en crudo, resultado entero (posicion + rid + collider del
+## cuerpo). Diccionario vacio si no pega en nada. Primitiva unica: _rayo() y
+## _colisionador() salen de aca, para que "donde apoya" y "sobre que apoya"
+## no puedan divergir.
 func _rayo_crudo(x: float, z: float, desde: float) -> Dictionary:
 	var esp := get_world_3d().direct_space_state
 	if esp == null:
@@ -292,6 +332,14 @@ func _rayo_crudo(x: float, z: float, desde: float) -> Dictionary:
 func _rayo(x: float, z: float, desde: float) -> float:
 	var golpe := _rayo_crudo(x, z, desde)
 	return golpe["position"].y if golpe else INF
+
+
+## Que hay bajo (x, z), como nodo. Mismo rayo que la altura, misma exclusion y
+## mismo hit_back_faces: si divergieran, "donde apoya" y "sobre que apoya"
+## podrian contestar cosas distintas.
+func _colisionador(x: float, z: float) -> Node:
+	var golpe := _rayo_crudo(x, z, _techo)
+	return golpe["collider"] if golpe else null
 
 
 ## Lo mismo que altura_terreno pero sin el apano: NAN cuando el rayo no da en
