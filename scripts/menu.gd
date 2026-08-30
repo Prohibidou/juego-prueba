@@ -1,14 +1,15 @@
 extends Control
 ## Pantalla de inicio, y escena principal del proyecto. Abre al instante porque
 ## no carga nada pesado; JUGAR pasa al juego, que ya se tapa a si mismo con la
-## portada mientras monta el campo.
+## portada mientras monta el mapa.
 
 const JUEGO := "res://escenas/Juego.tscn"
+const TIENDA := "res://escenas/Tienda.tscn"
 
 
 func _ready() -> void:
 	$Botones/Jugar.pressed.connect(func(): get_tree().change_scene_to_file(JUEGO))
-	$Botones/Tienda.pressed.connect(func(): _pendiente("La tienda todavia no"))
+	$Botones/Tienda.pressed.connect(func(): get_tree().change_scene_to_file(TIENDA))
 	$Botones/Ajustes.pressed.connect(func(): _pendiente("Los ajustes todavia no"))
 
 	for b in $Botones.get_children():
