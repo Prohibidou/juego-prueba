@@ -310,6 +310,18 @@ func altura_terreno(x: float, z: float, techo := INF) -> float:
 ## _colisionador() salen de aca, para que "donde apoya" y "sobre que apoya"
 ## no puedan divergir.
 func _rayo_crudo(x: float, z: float, desde: float) -> Dictionary:
+	# Entre el remove_child(mapa) viejo y que el mapa nuevo termine preparar()
+	# (_cargar_mapa/_reiniciar en juego.gd, tanto en el arranque como al
+	# reintentar), este nodo pasa varios fotogramas fuera del arbol mientras
+	# impulso.gd sigue con un Callable atado a ESTE mapa (el suyo se actualiza
+	# recien cuando termina preparar()). Pedir get_world_3d() ahi no devuelve
+	# null en silencio: tira un ERROR de motor y despues un SCRIPT ERROR al
+	# leer .direct_space_state de esa referencia nula. Cortar antes de pedirlo
+	# evita las dos. Esta es la unica puerta a la fisica (ver comentario de la
+	# funcion de arriba), asi que tapa a la vez _rayo(), _colisionador() y,
+	# via g.is_empty(), _altura_sembrable().
+	if not is_inside_tree():
+		return {}
 	var esp := get_world_3d().direct_space_state
 	if esp == null:
 		return {}

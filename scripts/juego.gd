@@ -572,6 +572,15 @@ func _physics_process(dt: float) -> void:
 		return
 
 	var suelo := mapa.altura_terreno(pos.x, pos.z)
+	# el rayo de altura excluye a proposito los cuerpos de la jaula (ver
+	# _montar_jaula), asi que dentro de ella "mentiria": pela toda la
+	# plataforma y da el suelo de verdad, metros mas abajo del piso que puso
+	# el artista (ver _check_jaula, "el rayo mentiria"). Con ese numero el
+	# piche se leia "volando" para siempre aunque estuviera parado quieto en
+	# el piso de la jaula, y el asentado (mas abajo) no llegaba nunca a
+	# quieto=true: el resguardo anti-softlock no se disparaba jamas.
+	if _en_la_jaula():
+		suelo = maxf(suelo, _jaula.piso())
 	var volando := pos.y > suelo + Util.RADIO + 0.4
 	_impulso_volo = _impulso_volo or volando
 	piche.linear_damp = 0.0 if volando else mapa.damp_suelo()
@@ -738,7 +747,14 @@ func _cine_portazo() -> void:
 ## Cierra el brinco al tocar suelo bajando.
 func _aterrizar() -> void:
 	var p := piche.global_position
-	if piche.linear_velocity.y > 0.0 or p.y > mapa.altura_terreno(p.x, p.z) + Util.RADIO + 0.06:
+	# mismo "rayo que mentiria" que en _physics_process: dentro de la jaula
+	# altura_terreno pela la plataforma entera y da el suelo real, metros mas
+	# abajo del piso del artista. Sin este piso de reserva, un brinco dentro
+	# de la jaula nunca se leia "aterrizado" y _saltando se quedaba pegado.
+	var suelo := mapa.altura_terreno(p.x, p.z)
+	if _en_la_jaula():
+		suelo = maxf(suelo, _jaula.piso())
+	if piche.linear_velocity.y > 0.0 or p.y > suelo + Util.RADIO + 0.06:
 		return
 	_saltando = false
 
@@ -1313,8 +1329,16 @@ func _self_check() -> void:
 		piche.linear_velocity = dir * 26.0   # el vector ENTERO, ver CLAUDE.md
 		quieto = false
 		var tras := 0.0
+		var previa := piche.global_position
 		for i in 90:
 			await get_tree().physics_frame
+			# el disparo termina cuando algo congela al piche o lo teletransporta
+			# (la red de rescate lo repone en la salida, que queda del OTRO lado
+			# del plano del casco: medir eso ya no es medir la bala, y daba un
+			# falso "atraviesa el casco" de 8.54 m)
+			if piche.freeze or piche.global_position.distance_to(previa) > 2.0:
+				break
+			previa = piche.global_position
 			tras = maxf(tras, (piche.global_position - plano).dot(dir))
 		print("casco: disparada a 26 m/s, el piche pasa %.2f m del plano del casco" % tras)
 		assert(tras < 1.0, "el piche atraviesa el casco del barco")
@@ -1325,7 +1349,12 @@ func _self_check() -> void:
 			var h := mapa.altura_terreno(punto.x, punto.y, 170.0)
 			assert(h > 166.3, "el muelle sigue teniendo huecos en (%s): h=%.2f" % [str(punto), h])
 		# la red de rescate: parado en el agua, el piche vuelve solo al ultimo suelo firme
-		_poner_piche(mapa.pos_salida(), false)
+		# el punto firme del test va FUERA de la jaula y APOYADO por rayo: la
+		# red repone con _poner_piche(_firme), que reapoya por rayo, y dentro
+		# de la jaula el rayo miente (pela la plataforma y da la cubierta, 3 m
+		# abajo del piso del artista): tomando la salida como punto firme, el
+		# piche "volvia" al mismo x/z pero 3 m mas abajo y el assert fallaba
+		_poner_piche(mapa.pos_salida() + _jaula.fuera() * 3.0)
 		var firme_antes := _firme
 		piche.global_position = Vector3(900.0, mapa.NIVEL_PERDIDO - 0.1, 750.0)
 		piche.freeze = false

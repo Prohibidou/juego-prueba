@@ -80,6 +80,17 @@ func cerrada() -> bool:
 	return is_instance_valid(_tapa)
 
 
+## Altura del piso pisable, en mundo. El origen del nodo ES el piso -de ahi
+## cuelgan los muros, que bajan 1.65 EXTRA para sellar el terreno real
+## (irregular y mas bajo alrededor)-, asi que no hace falta medir nada.
+## Lo usa quien vigile, porque su propio rayo de altura no sirve aca: los
+## cuerpos de la jaula estan excluidos a proposito (ver cuerpos()) para que
+## no le mientan a nadie que mira desde ARRIBA, pero eso mismo hace que el
+## rayo pele toda la jaula y de el suelo real, metros mas abajo del piso.
+func piso() -> float:
+	return global_position.y
+
+
 ## La puerta sigue en su sitio, sin tumbar.
 func puerta_entera() -> bool:
 	return not _rota
