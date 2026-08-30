@@ -158,6 +158,7 @@ var mapa: Mapa                # lo instancia _cargar_mapa(), no esta en Juego.ts
 @onready var barra: ProgressBar = $UI/Barra
 @onready var barra_stam: ProgressBar = $UI/BarraStam
 @onready var ayuda: Label = $UI/Ayuda
+@onready var contador: ContadorBasura = $UI/Contador
 @onready var sonido: Sonido = $Sonido
 
 
@@ -399,6 +400,10 @@ func _ir_a_nivel() -> void:
 	_poner_piche(mapa.pos_salida(), not mapa.tiene_jaula())
 	_montar_jaula()    # despues de colocar el piche: la deja dentro
 	impulso.encuadrar()
+	# el total es lo que quedo REALMENTE sembrado (mapa.basura.size()), no el
+	# @export_range de mapa.gd: parte de la siembra se pierde si el sitio
+	# sorteado no era firme (ver mapa._poblar_basura)
+	contador.reiniciar(mapa.basura.size())
 
 
 ## Reintentar: rehace el mapa actual desde cero -jaula, basura y fauna
@@ -492,6 +497,7 @@ func _process(dt: float) -> void:
 		sonido.recoger()
 		stamina = minf(STAMINA_MAX, stamina + cogidas * STAMINA_BASURA)
 		_aviso("+%d stamina" % roundi(cogidas * STAMINA_BASURA), 0.8)
+		contador.sumar(cogidas)
 
 	# espacio (o X del mando) salta. Flanco a mano: no hay accion en el mapa.
 	var salta := Input.is_key_pressed(KEY_SPACE) or Input.is_joy_button_pressed(0, JOY_BUTTON_X)
@@ -1503,6 +1509,25 @@ func _self_check() -> void:
 		assert(alcance > 9.0, "el impulso a tope no cruza ni un hueco")
 		assert(alcance < 20.0, "el impulso a tope se pasa las plataformas de largo")
 
+	# el contador de basura: recogida de VERDAD, por el camino real
+	# (mapa.recoger() lo llama _process() solo, no aca a mano), tiene que
+	# subir el numero Y cambiar el texto en pantalla. Si el mapa no sembro
+	# nada (basura.size() 0) no hay nada que probar.
+	if not mapa.basura.is_empty():
+		var pieza: Node3D = mapa.basura[0]
+		var vuelve_basura := piche.global_position
+		var total_basura := mapa.basura.size()
+		var recogidas_antes := contador.recogidas()
+		piche.global_position = pieza.global_position   # a tiro de R_RECOGE
+		await get_tree().process_frame                  # recoger() vive en _process
+		print("contador de basura: %s -> %s" % [
+			"%d/%d" % [recogidas_antes, total_basura], contador.texto()])
+		assert(contador.recogidas() == recogidas_antes + 1,
+			"recoger una pieza no sube el contador de basura")
+		assert(contador.texto() == "%d/%d" % [recogidas_antes + 1, total_basura],
+			"el contador de basura no muestra el numero nuevo en pantalla")
+		piche.global_position = vuelve_basura
+
 	# el pause: Tab congela, Tab suelta, y reintentar rehace el mapa actual
 	# entero -por eso se comprueba que la jaula siga en pie despues, si el
 	# mapa la trae-
@@ -1514,6 +1539,8 @@ func _self_check() -> void:
 	pausa.habilitada = false
 	await _reiniciar()
 	assert(is_equal_approx(stamina, STAMINA_MAX), "reintentar no repone la stamina")
+	print("contador de basura tras reintentar: %s" % contador.texto())
+	assert(contador.recogidas() == 0, "reintentar no pone en cero el contador de basura")
 	if mapa.tiene_jaula():
 		assert(is_instance_valid(_jaula) and _jaula.puerta_entera() and _jaula.cerrada(),
 			"reintentar no devuelve al piche a la jaula")
