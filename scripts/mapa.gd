@@ -20,6 +20,10 @@ const FOTO_AEREA := false
 # molde, se duplican y se siembran por el camino de la salida a la meta.
 const BASURA := "res://modelos/trash_and_debris.glb"
 const BASURAS := 16            # piezas por nivel
+# Un cuarto de los moldes del escaparate son laminas de espesor casi cero
+# (papeles, calcos, latas pisadas): a ras del piso hacen z-fighting con el
+# suelo (el flickering del playtest). Solo se siembran piezas con volumen.
+@export var MOLDE_MIN := 0.05  # metros del lado mas fino que se acepta
 
 # medidas reales de golf
 # --- la meta: subirse a la camioneta ---
@@ -34,6 +38,14 @@ const MARGEN_META := 0.35      # fraccion del ancho que cuenta como "encima"
 # 0.45 solo valia subirse al techo; con esto vale la caja, que es donde se
 # sube, y sigue sin valer meterse debajo del chasis.
 const ALTURA_CAJA := 0.28
+# --- el mar ---
+# El glb del muelle trae una malla llamada asi, de 700 m de lado. Como todo
+# el mapa, se le genera colision: el piche no se hunde, cae ENCIMA del agua.
+# La altura se mide de su caja al montar el campo, no se clava a mano. Y OJO:
+# no vale para saber si algo esta mojado, porque el muelle esta construido a
+# nivel del agua -la salida sale a y=164.74 y el mar tambien-: para eso esta
+# hay_agua(), que mira que malla devuelve el rayo.
+const MAR := "Mar"             # nombre de la malla dentro del glb del mapa
 const VEL_SUBIDO := 6.0        # m/s por encima de los cuales va de paso
 # ---------------------------------------
 # Pieza provisional: es una escena para poder cambiarla por el modelo bueno
@@ -57,6 +69,10 @@ const MARGEN_TECHO := 10.0
 # darla por caida al mar o a la bodega por uno de los huecos del casco.
 const HUNDIDO := 8.0
 const INTENTOS_SIEMBRA := 6    # tiros de dado por pieza antes de rendirse
+# Por debajo de esto ya es el mar (su superficie esta en 164.74) o la bodega
+# baja del barco: no hay vuelta caminando. Lo caminable mas bajo son las
+# plataformas del mar, con el tope en 165.2.
+@export var NIVEL_PERDIDO := 165.0
 
 # Constante por mapa y solo en vuelo. Se setea por escena en el Inspector, que
 # es donde se ve el mapa al que pertenece; antes vivia en una tabla paralela.
@@ -79,6 +95,7 @@ const INTENTOS_SIEMBRA := 6    # tiros de dado por pieza antes de rendirse
 @export_range(10.0, 400.0, 5.0) var roca_muere := 90.0
 
 var excluir: Array[RID] = []   # el piche, para que no la pisen los rayos
+var _rids_mar: Array[RID] = []   # los cuerpos del agua: ahi no se siembra
 
 var _escenario: Node3D
 var _salida := Vector3.ZERO
@@ -93,6 +110,7 @@ var _jaula_mapa := Transform3D.IDENTITY
 # El punto al que hay que llegar: el techo de la caja de la camioneta. Es lo
 # que mira la camara, lo que mide el HUD y hacia donde apunta la salida.
 var _punto_meta := Vector3.ZERO
+var _mar := NAN                 # altura de la superficie del agua; NAN si el mapa no trae mar
 var _techo := TECHO             # el de verdad lo mide preparar() con la caja del mapa
 var animales: Array = []
 var basura: Array = []
@@ -144,6 +162,11 @@ func preparar() -> void:
 
 	var n := 0
 	for m: MeshInstance3D in _mallas(_escenario):
+		if m.name == MAR:
+			# la superficie es el TECHO de su caja: la malla del agua tiene
+			# espesor y el piche se posa arriba, no en el medio
+			var cm: AABB = m.global_transform * m.get_aabb()
+			_mar = cm.position.y + cm.size.y
 		# El barco tambien va con trimesh. Se probo descomponerlo en cascos
 		# convexos (V-HACD, 32 cascos) por miedo a que el piche atravesara el
 		# casco fino, pero un convexo no puede tener huecos: los cascos
@@ -157,6 +180,10 @@ func preparar() -> void:
 		# el piso (Jaula.tscn): sobre la cubierta real, irregular, el piche se
 		# colaba por la rendija entre tapa y suelo y "la puerta no paraba".
 		m.create_trimesh_collision()
+		if m.name == "Mar":
+			for cuerpo in m.get_children():
+				if cuerpo is StaticBody3D:
+					_rids_mar.append((cuerpo as StaticBody3D).get_rid())
 		# Un trimesh choca solo por el lado de las normales (backface_collision
 		# arranca en false, y desde Godot 4.5 Jolt lo respeta de verdad). Medio
 		# mapa esta modelado a una cara -galpones, silos, el casco-, asi que la
@@ -180,11 +207,18 @@ func preparar() -> void:
 					copia.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 					m.set_surface_override_material(i, copia)
 		n += 1
+	if _rids_mar.is_empty():
+		push_warning("no se encontro la malla 'Mar': el filtro de siembra sobre el agua queda apagado")
 	var escaparate := (load(BASURA) as PackedScene).instantiate()
 	escaparate.visible = false     # se queda de molde, no se ve
 	add_child(escaparate)
 	for m in escaparate.find_children("*", "MeshInstance3D", true, false):
-		_moldes.append(m as MeshInstance3D)
+		var mi := m as MeshInstance3D
+		var s: Vector3 = (Transform3D(mi.global_transform.basis, Vector3.ZERO)
+			* mi.mesh.get_aabb()).size.abs()
+		if minf(s.x, minf(s.y, s.z)) < MOLDE_MIN:
+			continue
+		_moldes.append(mi)
 
 	# la camioneta del mapa es la meta: se guarda su caja YA colocada en el
 	# mundo, que el glb viene recentrado y sus coordenadas crudas no valen
@@ -260,6 +294,30 @@ func trafo_jaula_mapa() -> Transform3D:
 	return _jaula_mapa
 
 
+## Altura de la superficie del agua, o NAN si este mapa no tiene mar.
+func altura_mar() -> float:
+	return _mar
+
+
+## Si lo que hay bajo (x, z) es el agua y no el muelle. Sirve para saber si el
+## piche cae al mar o sobre tablas, que no suenan igual.
+##
+## Se pregunta por la MALLA que devuelve el rayo, NO por la altura: un muelle se
+## construye justo en la linea del agua, y aqui la salida y la superficie del mar
+## estan los dos a y=164.74 clavados. Con un margen de altura, medio muelle era
+## agua. `create_trimesh_collision()` cuelga el cuerpo de la malla, asi que el
+## padre del colisionador es el MeshInstance3D y trae su nombre puesto.
+##
+## Solo el mapa del muelle trae "Mar": en un mapa sin agua _mar queda NAN y esto
+## siempre da false, asi que el chapuzon nunca suena ahi (ver sonido.gd).
+func hay_agua(x: float, z: float) -> bool:
+	if is_nan(_mar):
+		return false
+	var cuerpo := _colisionador(x, z)
+	var malla := cuerpo.get_parent() if cuerpo else null
+	return malla != null and malla.name == MAR
+
+
 ## Deja el mapa listo para jugarse: fija la salida, la meta y siembra. Se llama
 ## una vez, despues de preparar(); cambiar de mapa es cambiar de escena.
 func ir_a() -> void:
@@ -301,13 +359,26 @@ func altura_terreno(x: float, z: float, techo := INF) -> float:
 	return _punto_meta.y if is_inf(h) else h
 
 
-## Rayo hacia abajo, en crudo. Devuelve INF si no encuentra NADA, que no es lo
-## mismo que encontrar suelo a la altura cero: altura_suelo necesita saber la
-## diferencia para no seguir pelando capas cuando ya no queda nada debajo.
-func _rayo(x: float, z: float, desde: float) -> float:
+## Rayo hacia abajo, en crudo, resultado entero (posicion + rid + collider del
+## cuerpo). Diccionario vacio si no pega en nada. Primitiva unica: _rayo() y
+## _colisionador() salen de aca, para que "donde apoya" y "sobre que apoya"
+## no puedan divergir.
+func _rayo_crudo(x: float, z: float, desde: float) -> Dictionary:
+	# Entre el remove_child(mapa) viejo y que el mapa nuevo termine preparar()
+	# (_cargar_mapa/_reiniciar en juego.gd, tanto en el arranque como al
+	# reintentar), este nodo pasa varios fotogramas fuera del arbol mientras
+	# impulso.gd sigue con un Callable atado a ESTE mapa (el suyo se actualiza
+	# recien cuando termina preparar()). Pedir get_world_3d() ahi no devuelve
+	# null en silencio: tira un ERROR de motor y despues un SCRIPT ERROR al
+	# leer .direct_space_state de esa referencia nula. Cortar antes de pedirlo
+	# evita las dos. Esta es la unica puerta a la fisica (ver comentario de la
+	# funcion de arriba), asi que tapa a la vez _rayo(), _colisionador() y,
+	# via g.is_empty(), _altura_sembrable().
+	if not is_inside_tree():
+		return {}
 	var esp := get_world_3d().direct_space_state
 	if esp == null:
-		return INF
+		return {}
 	var q := PhysicsRayQueryParameters3D.create(Vector3(x, desde, z), Vector3(x, SUELO, z))
 	q.exclude = excluir
 	# Los rayos de altura ignoran las caras traseras A PROPOSITO. Al poner las
@@ -318,8 +389,23 @@ func _rayo(x: float, z: float, desde: float) -> float:
 	# Con esto los rayos ven lo mismo de siempre y la doble cara queda solo
 	# para los cuerpos, que es donde hace falta.
 	q.hit_back_faces = false
-	var toque := esp.intersect_ray(q)
-	return toque["position"].y if toque else INF
+	return esp.intersect_ray(q)
+
+
+## Rayo hacia abajo. Devuelve INF si no encuentra NADA, que no es lo mismo que
+## encontrar suelo a la altura cero: altura_suelo necesita saber la diferencia
+## para no seguir pelando capas cuando ya no queda nada debajo.
+func _rayo(x: float, z: float, desde: float) -> float:
+	var golpe := _rayo_crudo(x, z, desde)
+	return golpe["position"].y if golpe else INF
+
+
+## Que hay bajo (x, z), como nodo. Mismo rayo que la altura, misma exclusion y
+## mismo hit_back_faces: si divergieran, "donde apoya" y "sobre que apoya"
+## podrian contestar cosas distintas.
+func _colisionador(x: float, z: float) -> Node:
+	var golpe := _rayo_crudo(x, z, _techo)
+	return golpe["collider"] if golpe else null
 
 
 ## Lo mismo que altura_terreno pero sin el apano: NAN cuando el rayo no da en
@@ -332,12 +418,32 @@ func _altura_cruda(x: float, z: float, techo := INF) -> float:
 	return NAN if is_inf(h) else h
 
 
-## Altura para SEMBRAR: ademas de exigir que el rayo pegue en algo, tira las
-## que se cuelan por los huecos del casco y acaban en el mar o en la bodega,
-## muy por debajo del camino salida-meta. Devuelve NAN si el sitio no vale.
+## Altura para SEMBRAR: ademas de exigir que el rayo pegue en algo, tira los
+## sitios donde una pieza no se puede recoger andando: el mar (que colisiona y
+## el rayo lo ve como piso), lo que este por debajo de todo lo caminable, lo
+## que se hundio mucho respecto del camino salida-meta, y lo que quedo BAJO
+## TECHO -un rayo que se colo por un hueco del casco pega en la bodega, y esa
+## botella se ve por el agujero pero no hay como agarrarla-. Devuelve NAN si
+## el sitio no vale.
 func _altura_sembrable(x: float, z: float) -> float:
-	var y := _altura_cruda(x, z)
-	if is_nan(y) or y < minf(_salida.y, _punto_meta.y) - HUNDIDO:
+	var g := _rayo_crudo(x, z, _techo)
+	if g.is_empty():
+		return NAN
+	var y: float = g["position"].y
+	if y < minf(_salida.y, _punto_meta.y) - HUNDIDO or y < NIVEL_PERDIDO + 0.1:
+		return NAN
+	if _rids_mar.has(g["rid"]):
+		return NAN
+	# cielo abierto: el rayo va de +0.4 (salta el volumen de la propia pieza)
+	# a +2.5; si en ese tramo hay geometria, esto es la bodega (o un
+	# entrepiso): se ve, no se alcanza. hit_back_faces en true porque la cara
+	# de la cubierta mira hacia arriba y desde abajo es trasera.
+	var esp := get_world_3d().direct_space_state
+	var q := PhysicsRayQueryParameters3D.create(
+		Vector3(x, y + 0.4, z), Vector3(x, y + 2.5, z))
+	q.exclude = excluir
+	q.hit_back_faces = true
+	if esp.intersect_ray(q):
 		return NAN
 	return y
 
@@ -381,6 +487,13 @@ func llego(pos: Vector3, vel := Vector3.ZERO) -> bool:
 		and pos.y > _meta.position.y + _meta.size.y * ALTURA_CAJA
 
 
+## Ya no hay vuelta: el agua y la bodega quedan por debajo de todo lo caminable.
+## Quien la use decide que hacer (reponer, penalizar); el mapa solo sabe donde
+## termina lo jugable.
+func perdida(pos: Vector3) -> bool:
+	return pos.y < NIVEL_PERDIDO
+
+
 ## Cuanto frena el suelo. Un solo valor para todo el mapa: las zonas de golf
 ## -calle, rough, green- eran una franja invisible entre la salida y la meta
 ## que cambiaba el rozamiento sin que el jugador pudiera verla.
@@ -412,9 +525,10 @@ func _poblar_fauna() -> void:
 		if is_nan(y):
 			continue
 		var nodo := (load(ANIMAL) as PackedScene).instantiate()
-		# altura_suelo pela la copa: _altura_sembrable ya valido que p es firme,
-		# pero el rayo bajo un arbol para en la copa, no en el pasto.
-		nodo.position = Vector3(p.x, altura_suelo(p.x, p.y), p.y)
+		# se coloca en la misma y que valido _altura_sembrable: pelar de nuevo con
+		# altura_suelo cruza la cubierta por los huecos del casco y devuelve la
+		# bodega o el mar, que es justo lo que _altura_sembrable ya descarto.
+		nodo.position = Vector3(p.x, y, p.y)
 		add_child(nodo)
 		animales.append({"nodo": nodo, "dir": randf() * TAU, "t": randf() * 3.0,
 			"vivo": true, "color": COLOR_ANIMAL})
@@ -452,10 +566,13 @@ func _poblar_basura() -> void:
 		malla.position = -caja.get_center()   # el molde viene donde lo dejo el escaparate
 		var pieza := Node3D.new()
 		pieza.add_child(malla)
-		pieza.position = Vector3(p.x, altura_suelo(p.x, p.y) + caja.size.y * 0.5, p.y)
+		# la misma y que valido _altura_sembrable: pelar de nuevo con altura_suelo
+		# cruza la cubierta por los huecos del casco y termina en la bodega o el mar.
+		pieza.position = Vector3(p.x, y + caja.size.y * 0.5, p.y)
 		pieza.rotation.y = randf() * TAU
 		add_child(pieza)
 		basura.append(pieza)
+	print("basura sembrada: %d de %d" % [basura.size(), BASURAS])
 
 
 # ---------------------------------------------------------------------------

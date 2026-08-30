@@ -13,10 +13,17 @@ signal impulsado(velocidad: Vector3)
 # --- calibracion de la fuerza ---
 @export_group("Fuerza")
 @export_range(0.5, 15.0, 0.1) var VEL_MIN := 3.0        # un saltito
-@export_range(5.0, 60.0, 0.5) var VEL_MAX := 26.0       # el impulso a barra llena
+# El techo del impulso. Esto es un juego de PLATAFORMAS: el salto largo tiene
+# que cruzar un hueco entre plataformas, no el mapa entero. A 26 m/s el
+# alcance eran ~45 m y con un solo impulso a tope se pasaban todas de largo;
+# el alcance va con el CUADRADO de la velocidad, asi que bajar a 14 lo deja
+# en ~14 m. Son saltos, no atajos.
+@export_range(5.0, 60.0, 0.5) var VEL_MAX := 14.0
 @export_range(0.1, 3.0, 0.05) var CARGA_POR_SEG := 0.5  # 2 s de barra entera: antes era 0.9 s y todo salia a tope
 # La distancia va con el CUADRADO de la velocidad, asi que una barra lineal se
-# siente "todo o nada". Con CURVA<1 la barra se lee casi como distancia.
+# siente "todo o nada". Con CURVA<1 la barra se lee casi como distancia: con
+# VEL_MIN 3 y VEL_MAX 14 la barra a 1/4, 1/2, 3/4 y llena cae a 3, 6, 10 y 14
+# metros, que es el escalonado que hace falta para elegir plataforma.
 @export_range(0.3, 2.0, 0.05) var CURVA := 0.75
 # Angulo de salida fijo: era un control (flechas, stick derecho y deslizador)
 # que se comia el arriba/abajo, y lo que se quiere ahi es mover al bicho.
@@ -51,7 +58,7 @@ signal impulsado(velocidad: Vector3)
 @export_range(0.2, 20.0, 0.1) var CAM_ATRAS_MAX := 3.2
 @export_range(30.0, 110.0, 1.0) var CAM_FOV := 62.0
 @export_range(30.0, 120.0, 1.0) var CAM_FOV_MAX := 74.0
-@export_range(1.0, 60.0, 0.5) var CAM_VEL_REF := 24.0      # m/s a los que la camara esta del todo abierta: va con VEL_MAX
+@export_range(1.0, 60.0, 0.5) var CAM_VEL_REF := 13.0      # m/s a los que la camara esta del todo abierta: va con VEL_MAX
 @export_range(0.0, 3.0, 0.05) var CAM_UMBRAL_QUIETO := 0.3 # m/s: por debajo, "quieto" para la camara (igual que QUIETA en juego.gd)
 # Rumbo con tope de giro: un tiron del stick puede cambiar la velocidad del
 # piche de golpe (90 grados o mas), pero la camara y la mira no saltan con
@@ -265,6 +272,18 @@ func _girar_hacia(actual: Vector3, objetivo: Vector3, max_rad: float) -> Vector3
 	return Vector3(sin(a), 0, cos(a))
 
 
+## El punto pegado al piche desde el que se tiran los rayos anti-pared: el
+## "ojo". Es UNO solo para el objetivo y para la posicion real de la camara;
+## si cada uno midiera desde un origen distinto, sus clamps no verian la misma
+## pared. Publica: el self-check de juego.gd mide desde aqui si la camara
+## quedo tapada.
+func origen_camara() -> Vector3:
+	if cine:
+		return _piche.global_position
+	var alto := CAM_ALTO_JAULA if (activo and enjaulado) else CAM_ALTO
+	return _piche.global_position + Vector3.UP * alto
+
+
 ## "activo" (juego.gd) esta puesto tanto apuntando quieto como llevando el
 ## piche a mano con A/D/W/S: en los dos casos el rumbo lo decide el jugador
 ## via mira, asi que la camara sigue la mira siempre igual, sin mirar la
@@ -280,20 +299,17 @@ func objetivo_camara(dt := 0.0) -> Vector3:
 		# El desvio es fijo, asi que en el muelle caia dentro del casco o de un
 		# galpon y el plano entero (2.4 s) se veia desde dentro de una pared:
 		# pasa por el mismo rayo que las demas ramas.
-		return _sin_pared(_piche.global_position, _piche.global_position + cine_offset)
+		return _sin_pared(origen_camara(), _piche.global_position + cine_offset)
 	if activo:
 		var atras := CAM_ATRAS_JAULA if enjaulado else CAM_ATRAS_TIRO
-		var alto := CAM_ALTO_JAULA if enjaulado else CAM_ALTO
-		var desde := _piche.global_position + Vector3.UP * alto
-		var objetivo := desde - Vector3(sin(mira), 0, cos(mira)) * atras
-		return _sin_pared(desde, objetivo)
+		var desde := origen_camara()
+		return _sin_pared(desde, desde - Vector3(sin(mira), 0, cos(mira)) * atras)
 	var plana := Vector3(_piche.linear_velocity.x, 0, _piche.linear_velocity.z)
 	if plana.length() > CAM_UMBRAL_QUIETO:
 		_dir_camara = _girar_hacia(_dir_camara, plana.normalized(), CAM_GIRO_MAX * dt)
 	var t := _factor_velocidad()
-	var desde := _piche.global_position + Vector3.UP * CAM_ALTO
-	var objetivo := desde - _dir_camara * lerpf(CAM_ATRAS_MIN, CAM_ATRAS_MAX, t)
-	return _sin_pared(desde, objetivo)
+	var desde := origen_camara()
+	return _sin_pared(desde, desde - _dir_camara * lerpf(CAM_ATRAS_MIN, CAM_ATRAS_MAX, t))
 
 
 ## Trae la camara para adelante si entre "desde" (pegado al piche) y el punto
@@ -375,6 +391,14 @@ func _mover_camara(dt: float) -> void:
 	var paso := _paso(CAM_SUAVIZADO, dt)
 	_camara.global_position = _camara.global_position.lerp(objetivo_camara(dt), paso)
 	_mirada = _mirada.lerp(_mirada_deseada(), paso)
+	# El rayo de objetivo_camara() solo protege el OBJETIVO: cuando una pared
+	# se mete de golpe entre el piche y la camara (doblar una esquina, un drop,
+	# un corte de cine), el objetivo salta al punto seguro pero la camara tarda
+	# ~1/CAM_SUAVIZADO s en llegar, y ese camino lo hacia POR DENTRO de la
+	# pared -medido: rachas de 8 a 16 frames, hasta 5.5 m de hondo-. Se vuelve
+	# a clavar la posicion REAL: entrar al punto seguro es instantaneo, salir
+	# sigue suave porque el lerp de arriba no se toca.
+	_camara.global_position = _sin_pared(origen_camara(), _camara.global_position)
 	_camara.look_at(_mirada)
 	# en cine el fov se queda quieto: el plano es una composicion fija, y como
 	# el guion sube el piche de 2.6 a 22 m/s, el ensanchado por velocidad metia

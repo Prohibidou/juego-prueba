@@ -17,7 +17,10 @@ const FRENO_ATERRIZAJE := 0.32   # fraccion de velocidad que le queda al tocar
 # sobrevive al freno igual podia reptar mas de la cuenta. A partir de este
 # tiempo EN EL SUELO (no cuenta el vuelo) se corta y se da por quieta.
 const CAIDA_MAX := 0.5
-const VEL_MARCA := 15.0
+# un aterrizaje que deja huella. Va con la VEL_MAX de impulso.gd: puesto en 15
+# no se marcaba ni una, porque el impulso a tope ya no llega a esa velocidad.
+const VEL_MARCA := 8.0
+const ESTELA_VEL := 10.0   # a partir de aqui el vuelo deja estela; tambien va con VEL_MAX
 const MAX_MARCAS := 30
 # --- direccion en el aire ---
 const AIRE_ACEL := 11.0     # m/s2 laterales mientras se dirige
@@ -26,6 +29,10 @@ const AIRE_TIEMPO := 1.1    # segundos de timon por impulso
 const CONDUCE_ACEL := 7.0   # m/s2 que mete el stick izquierdo
 const CONDUCE_MAX := 4.5    # m/s: es andar, no un impulso
 const GIRO_MAX := 9.0       # rad/s: por encima de esto la vuelta es un borron
+# En el aire no hay rodada que copiar: el piche gira sobre su propio eje a
+# ritmo fijo, para que el impulso se lea como voltereta y no como una bola
+# que flota tiesa. Mas alla de GIRO_MAX la vuelta es un borron.
+@export_range(0.0, 15.0, 0.5) var GIRO_VUELO := 7.0  # rad/s de voltereta en vuelo
 # --- stamina ---
 # Se anda libre, sin radio: lo unico que cuesta stamina es el impulso (G). La
 # basura del mapa la repone: es lo que obliga a desviarse de la linea recta
@@ -108,6 +115,7 @@ var _v_pendiente := Vector3.ZERO
 var _giro := 0.0
 var _en_aire := false
 var _desde := Vector3.ZERO
+var _firme := Vector3.ZERO    # ultimo sitio donde estuvo parada en suelo jugable
 var _ultimo := 0.0        # distancia del ultimo impulso, para el aviso
 var _diam_piche := 1.0     # tamano del modelo tal cual viene, en sus unidades
 var _caja_piche := AABB()
@@ -127,6 +135,11 @@ var _dir_rueda := Vector3.FORWARD
 var _mira_rueda := 0.0                   # ultima mira vista, para girar en el sitio con A/D
 var _aire := 0.0          # timon que le queda a este impulso
 var _marcas: Array = []
+# sube en cada reinicio. Los await que quedaron colgados (el cartel de
+# "Llegaste a la camioneta", sobre todo) miran este numero al despertar: si
+# cambio, la partida que estaban terminando ya no existe y no tienen que
+# tocar nada.
+var _vuelta := 0
 
 var mapa: Mapa                # lo instancia _cargar_mapa(), no esta en Juego.tscn
 @onready var piche: RigidBody3D = $Piche
@@ -135,21 +148,32 @@ var mapa: Mapa                # lo instancia _cargar_mapa(), no esta en Juego.ts
 @onready var camara: Camera3D = $Camara
 @onready var impulso: Node3D = $Impulso
 @onready var entorno: WorldEnvironment = $Entorno
+@onready var pausa: Pausa = $Pausa
 @onready var hud: Label = $UI/Hud
 @onready var msg: Label = $UI/Msg
 @onready var barra: ProgressBar = $UI/Barra
 @onready var barra_stam: ProgressBar = $UI/BarraStam
+@onready var ayuda: Label = $UI/Ayuda
+@onready var sonido: Sonido = $Sonido
 
 
 func _ready() -> void:
 	randomize()
 	_t_arranque = Time.get_ticks_msec()
+	# suenan ya, durante la carga: la portada esta cinco segundos en pantalla
+	# y en silencio parece que el juego se colgo
+	sonido.musica(true)
+	sonido.ambiente(true)
 	_preparar_piche()
 	_conectar_tactil()
 	barra_stam.max_value = STAMINA_MAX   # el .tscn no puede leer la constante
 
 	impulso.preparar(piche, camara)
 	impulso.impulsado.connect(_on_impulsado)
+	pausa.reintentar.connect(_reiniciar)
+	# ponytail: salir es cerrar el juego. Si algun dia el menu tiene que
+	# recuperar la partida, aca va un change_scene_to_file a Menu.tscn.
+	pausa.salir.connect(func(): get_tree().quit())
 
 	# ponytail: con que mapa arrancar. Lo decide el menu, y por linea de
 	# comandos se pisa:  godot --path . escenas/Juego.tscn -- --mapa 1
@@ -175,6 +199,9 @@ func _quitar_portada() -> void:
 	# ponytail: se esconde, no se libera. Hace falta entera para tapar el
 	# cambio de mapa, que tambien tarda. La transicion todavia no esta hecha.
 	t.tween_callback(func(): _portada.visible = false)
+	# recien ahora: con la portada puesta, pausar congelaria los
+	# temporizadores que la estan quitando y no se iria nunca
+	pausa.habilitada = true
 
 
 ## El piche esta en Piche.tscn. Aca queda solo lo que un .tscn no guarda: el
@@ -206,7 +233,11 @@ func _rodar(e: float, dt: float) -> Basis:
 		_dir_rueda = plana.normalized()
 		_eje_rueda = Vector3.UP.cross(_dir_rueda)
 		var radio := _diam_piche * e * 0.5
-		if dt > 0.0 and radio > 0.0:
+		if _en_aire:
+			# la voltereta usa el mismo eje y el mismo acumulador que la
+			# rodada: el despegue y el aterrizaje no pegan saltos de angulo
+			_angulo_rueda += GIRO_VUELO * dt
+		elif dt > 0.0 and radio > 0.0:
 			_angulo_rueda += minf(plana.length() / radio, GIRO_MAX) * dt
 	elif dt > 0.0 and impulso.activo:
 		# quieto o girando en el sitio: A/D solo cambia la mira (impulso.gd), no
@@ -266,7 +297,13 @@ func _escalar_vista(dist: float, dt := 0.0) -> void:
 ## piche ya dentro. Los cuerpos de la jaula se sacan de los rayos de altura: si
 ## no, el rayo del salida daria en su techo y todo se colocaria mas arriba.
 func _montar_jaula() -> void:
+	# la jaula vieja sigue viva hasta el fin del frame (queue_free): sus
+	# cuerpos tienen que seguir excluidos de los rayos de altura o cualquier
+	# _poner_piche de ESTE frame lo planta arriba de su techo. RIDs de cuerpos
+	# ya muertos en la lista no molestan.
+	var viejos: Array[RID] = []
 	if is_instance_valid(_jaula):
+		viejos = _jaula.cuerpos()
 		_jaula.queue_free()   # la bisagra y la puerta cuelgan de ella
 		_jaula = null
 	Engine.time_scale = 1.0     # por si se cambia de mapa en pleno portazo
@@ -286,6 +323,7 @@ func _montar_jaula() -> void:
 	# techo de la jaula y el piche se coloca dos metros mas arriba
 	mapa.excluir = [piche.get_rid()]
 	mapa.excluir.append_array(_jaula.cuerpos())
+	mapa.excluir.append_array(viejos)
 
 
 ## Los nodos estan en Juego.tscn; aca solo queda lo que un .tscn no guarda:
@@ -331,6 +369,7 @@ func _cargar_mapa(i: int) -> void:
 	_ir_a_nivel()
 	_check_mapa()
 	msg.text = ""
+	listo = true    # recien aca: hasta que no esta todo montado no hay que leer input
 
 
 ## Deja el mapa ya montado listo para jugar: piche en la salida, jaula puesta,
@@ -350,10 +389,20 @@ func _ir_a_nivel() -> void:
 	impulso.encuadrar()
 
 
+## Reintentar: rehace el mapa actual desde cero -jaula, basura y fauna
+## incluidas- sin pasar por la portada ni la intro. Va por el mismo camino que
+## cambiar de mapa (_cargar_mapa), que ya es la unica forma de "resetear" un
+## mapa: mapa.ir_a() esta pensada para llamarse una vez.
+func _reiniciar() -> void:
+	_vuelta += 1
+	await _cargar_mapa(indice)
+
+
 ## `apoyar` tira un rayo y deja el piche sobre lo que encuentre, que es lo que
 ## quiere un drop. En el salida NO: ahi la altura es la de la jaula del modelo, y
 ## un rayo la dejaria tres metros mas abajo, fuera de la jaula.
 func _poner_piche(donde: Vector3, apoyar := true) -> void:
+	sonido.callar()          # si venia volando, el giro en el aire se corta aca
 	piche.freeze = true
 	piche.linear_velocity = Vector3.ZERO
 	piche.angular_velocity = Vector3.ZERO
@@ -372,6 +421,7 @@ func _poner_piche(donde: Vector3, apoyar := true) -> void:
 	_portazo = 1.0
 	_mira_rueda = impulso.mira  # que no arranque girando por la diferencia con la mira anterior
 	_aplicar_damp()
+	_firme = piche.global_position
 
 
 func _aplicar_damp() -> void:
@@ -397,6 +447,7 @@ func _destrabar() -> void:
 
 
 func _on_impulsado(velocidad: Vector3) -> void:
+	sonido.impulso(impulso.fuerza)   # sigue puesta: impulso.gd la borra tras emitir
 	# fuerza sigue puesta: impulso.gd la borra despues de emitir
 	stamina = maxf(0.0, stamina - STAMINA_IMPULSO * impulso.fuerza)
 	_desde = piche.global_position
@@ -410,14 +461,23 @@ func _on_impulsado(velocidad: Vector3) -> void:
 func _process(dt: float) -> void:
 	if not listo:
 		return
+	# lo primero de todo: si esto quedara detras de un return, el giro en el
+	# aire se quedaria sonando con el piche ya parado
+	sonido.vuelo(piche.linear_velocity.length() if _en_aire else 0.0, dt)
 	impulso.activo = quieto and not llegado
 	# sin stamina no hay impulso: la barra no sube y cargar() ni empieza
 	impulso.tope = clampf(stamina / STAMINA_IMPULSO, 0.0, 1.0)
 	impulso.puede_saltar = stamina >= STAMINA_MIN
 	impulso.enjaulado = _en_la_jaula()
 
+	# el playtest se quedo encerrado sin saber que tecla era: el impulso es G y
+	# no se dice en ningun lado. Solo mientras la puerta siga puesta.
+	ayuda.text = "Mantené apretado G y soltá: el impulso tira la puerta" \
+		if _enjaulado() and quieto and not llegado else ""
+
 	var cogidas := mapa.recoger(piche.global_position, R_RECOGE)
 	if cogidas > 0:
+		sonido.recoger()
 		stamina = minf(STAMINA_MAX, stamina + cogidas * STAMINA_BASURA)
 		_aviso("+%d stamina" % roundi(cogidas * STAMINA_BASURA), 0.8)
 
@@ -483,6 +543,22 @@ func _physics_process(dt: float) -> void:
 		return
 
 	if quieto:
+		# la red de rescate: entre las maderas del muelle o por un hueco del
+		# casco se cae al MAR, que colisiona -se queda uno caminando sobre el
+		# agua sin vuelta-. Andando no hay pena: caerse por una rendija es
+		# culpa del mapa, no del jugador.
+		if mapa.perdida(piche.global_position):
+			_aviso("¡Al agua!", 1.2)
+			_poner_piche(_firme)
+			return
+		# _firme solo se toma APOYADO en suelo jugable: durante la caida por un
+		# hueco el piche sigue "quieto" (andando) y sin este resguardo _firme
+		# quedaba en el aire sobre el propio hueco -reponer ahi lo devolvia al
+		# mar y era un rebote infinito de rescates
+		if not _saltando and (piche.freeze or absf(piche.linear_velocity.y) < 0.1):
+			var alt := mapa.altura_terreno(piche.global_position.x, piche.global_position.z)
+			if piche.global_position.y - Util.RADIO < alt + 0.05 and alt > mapa.NIVEL_PERDIDO:
+				_firme = piche.global_position
 		_conducir(dt)
 		if _saltando:
 			_aterrizar()
@@ -497,16 +573,38 @@ func _physics_process(dt: float) -> void:
 		_poner_piche(_desde)
 		return
 
+	# un impulso que termina en el agua repone desde donde se pego. Sin esto
+	# el piche aterrizaba EN el mar (colisiona) y se seguia jugando desde el
+	# agua. Sin sistema de penalizacion (ver _destrabar), repone sin costo.
+	if mapa.perdida(pos) and not _empujando:
+		_aviso("¡Al agua!", 1.4)
+		_poner_piche(_desde)
+		return
+
 	if mapa.llego(pos, vel):
 		_llegar()
 		return
 
 	var suelo := mapa.altura_terreno(pos.x, pos.z)
+	# el rayo de altura excluye a proposito los cuerpos de la jaula (ver
+	# _montar_jaula), asi que dentro de ella "mentiria": pela toda la
+	# plataforma y da el suelo de verdad, metros mas abajo del piso que puso
+	# el artista (ver _check_jaula, "el rayo mentiria"). Con ese numero el
+	# piche se leia "volando" para siempre aunque estuviera parado quieto en
+	# el piso de la jaula, y el asentado (mas abajo) no llegaba nunca a
+	# quieto=true: el resguardo anti-softlock no se disparaba jamas.
+	if _en_la_jaula():
+		suelo = maxf(suelo, _jaula.piso())
 	var volando := pos.y > suelo + Util.RADIO + 0.4
 	_impulso_volo = _impulso_volo or volando
 	piche.linear_damp = 0.0 if volando else mapa.damp_suelo()
-	estela.emitting = volando and vel.length() > 20.0
+	estela.emitting = volando and vel.length() > ESTELA_VEL
 	if _en_aire and not volando:
+		# con la velocidad de LLEGADA, antes de que FRENO_ATERRIZAJE se la coma
+		if mapa.hay_agua(pos.x, pos.z):
+			sonido.chapuzon()
+		else:
+			sonido.aterrizaje(vel.length())
 		if vel.length() > VEL_MARCA:
 			_marca(pos, vel.length())
 		# el toque de aterrizaje: el piche cae y se planta, aqui pierde
@@ -614,6 +712,7 @@ func _saltar() -> void:
 	if _saltando or not (listo and quieto and not llegado):
 		return
 	_saltando = true
+	sonido.salto()
 	piche.freeze = false      # congelada no admite ni fuerzas ni velocidad
 	piche.linear_velocity += Vector3.UP * IMPULSO_SALTO
 
@@ -640,6 +739,7 @@ func _reventar_puerta(fuera: Vector3) -> void:
 	tw.tween_callback(func(): _empujando = false)
 	_jaula.tirar_puerta(PORTAZO_EMPUJE, PORTAZO_SUELTA)
 	_jaula.abrir()
+	sonido.portazo()
 	_cine_portazo()
 
 
@@ -661,7 +761,14 @@ func _cine_portazo() -> void:
 ## Cierra el brinco al tocar suelo bajando.
 func _aterrizar() -> void:
 	var p := piche.global_position
-	if piche.linear_velocity.y > 0.0 or p.y > mapa.altura_terreno(p.x, p.z) + Util.RADIO + 0.06:
+	# mismo "rayo que mentiria" que en _physics_process: dentro de la jaula
+	# altura_terreno pela la plataforma entera y da el suelo real, metros mas
+	# abajo del piso del artista. Sin este piso de reserva, un brinco dentro
+	# de la jaula nunca se leia "aterrizado" y _saltando se quedaba pegado.
+	var suelo := mapa.altura_terreno(p.x, p.z)
+	if _en_la_jaula():
+		suelo = maxf(suelo, _jaula.piso())
+	if piche.linear_velocity.y > 0.0 or p.y > suelo + Util.RADIO + 0.06:
 		return
 	_saltando = false
 
@@ -683,8 +790,8 @@ func _en_la_jaula() -> bool:
 
 
 func _marca(pos: Vector3, v: float) -> void:
-	var r := clampf(v * 0.005, 0.06, 0.35)
-	var m := Util.disco(r, 0.02, Color(0.30, 0.24, 0.14))
+	var r := clampf(v * 0.005, 0.05, 0.2)
+	var m := Util.disco(r, 0.02, Color(0.22, 0.19, 0.13))
 	m.position = Vector3(pos.x, mapa.altura_terreno(pos.x, pos.z) + 0.02, pos.z)
 	mapa.add_child(m)
 	_marcas.append(m)
@@ -732,12 +839,17 @@ func _morir(motivo: String) -> void:
 ## llegada y el guardado del progreso (AUDITORIA.md).
 func _llegar() -> void:
 	llegado = true
+	sonido.callar()
 	piche.freeze = true
 	estela.emitting = false
 	msg.text = "La alcanzaste!" if mapa.meta_se_mueve() else "Llegaste a la camioneta"
-	# en tiempo real: si se llega con la camara lenta puesta, el cartel se
-	# estiraba igual que los avisos
+	# en tiempo real, y guardando la vuelta: si se llega con la camara lenta
+	# puesta, o si reintentan mientras se ve el cartel, este await no tiene
+	# que tocar nada de una partida que ya no es la que lo lanzo
+	var vuelta := _vuelta
 	await get_tree().create_timer(1.8, true, false, true).timeout
+	if vuelta != _vuelta:
+		return      # reintentaron mientras se veia el cartel: ya hay otra partida
 	msg.text = ""
 	await _cargar_mapa((indice + 1) % mapas.size())
 	llegado = false
@@ -764,6 +876,55 @@ func _probar_jaula() -> void:
 	var b := await _empujar(a_barrotes)
 	print("jaula: contra los barrotes, el piche queda en z=%.2f" % b.z)
 	assert(absf(b.z) < 1.0, "el piche se cuela entre los barrotes")
+
+	# 2b. ni por las esquinas: los muros de 2 m dejaban un tunel diagonal de
+	# 30x30 cm en cada una (el piche mide 4 cm y salia caminando)
+	for esquina in [Vector3(1, 0, 1), Vector3(1, 0, -1), Vector3(-1, 0, 1), Vector3(-1, 0, -1)]:
+		_poner_piche(mapa.pos_salida(), false)
+		var e := await _empujar((_jaula.global_basis * esquina).normalized())
+		print("jaula: contra la esquina %s queda en (%.2f, %.2f)" % [str(esquina), e.x, e.z])
+		assert(absf(e.x) < 1.05 and absf(e.z) < 1.05, "el piche se escapa por una esquina")
+		# cota INFERIOR: si un rescate enmascarado repusiera el piche en la salida,
+		# la lectura sana es 0.95-0.98 (apretada contra el muro); un
+		# teletransporte a la salida daria ~0 y pasaria la cota superior sin apretar nada
+		assert(maxf(absf(e.x), absf(e.z)) > 0.5,
+			"la prueba de esquina no llego a apretar contra el muro")
+
+	# 3b. un impulso a full contra un muro ciego tampoco lo tunelea: el
+	# playtest reportaba al piche "traspasando los barrotes", y a 26 m/s eso
+	# es cosa del CCD, no de andar
+	_poner_piche(mapa.pos_salida(), false)
+	impulso.mira = atan2(a_barrotes.x, a_barrotes.z)
+	impulso.activo = true
+	impulso.cargar()
+	impulso.fuerza = 1.0
+	impulso.soltar()
+	# la dispersion ya se sorteo dentro de soltar(), en la linea de arriba: esto
+	# solo deja fijada la mira que queda puesta para lo que siga
+	impulso.mira = atan2(a_puerta.x, a_puerta.z)
+	# el impulso recien se aplica en el SIGUIENTE tick (ver _physics_process):
+	# sin estos dos frames de margen, el primer chequeo de "quieto" de abajo
+	# todavia lee el valor de ANTES del impulso y corta el loop de entrada
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	for i in 900:
+		if quieto:
+			break
+		await get_tree().physics_frame
+	var tunel := _jaula.global_transform.affine_inverse() * piche.global_position
+	print("jaula: impulso a full contra el fondo, queda en z=%.2f" % tunel.z)
+	assert(absf(tunel.z) < 1.3, "el impulso a full tunelea el muro")
+	# el resguardo anti-softlock: cualquier impulso que se asienta adentro
+	# tira la puerta y abre el hueco, pegue donde pegue -si no, el jugador
+	# quedaria encerrado sin poder salir-. Se verifica eso, no que la puerta
+	# aguante: aguantar no es una promesa del diseno.
+	assert(not _jaula.cerrada(), "el impulso adentro no abrio el hueco anti-softlock")
+	stamina = STAMINA_MAX
+	# el resguardo deja esta jaula rota siempre: se remonta una nueva y entera
+	# para que el punto 3 arranque en las condiciones que necesita
+	_poner_piche(mapa.pos_salida(), false)
+	_montar_jaula()
+	impulso.reset(mapa.pos_salida(), mapa.pos_meta())
 
 	# 3. brincar ni tira la puerta ni despeja el techo
 	_poner_piche(mapa.pos_salida(), false)
@@ -812,11 +973,107 @@ func _empujar(dir: Vector3) -> Vector3:
 	return _jaula.global_transform.affine_inverse() * piche.global_position
 
 
+## La camara no se mete en las paredes. El rayo de impulso.gd protege el objetivo
+## Y la posicion real: aqui se provoca el caso que lo rompia -una pared que
+## APARECE entre el piche y la camara- y se cuenta cuantos frames queda la
+## camara tapada. Conducir contra una pared plana no basta para reproducirlo
+## (el camino del lerp entre dos puntos legales no la cruza): hace falta que el
+## piche cambie de lado, que es lo que pasa al doblar una esquina o en un drop.
+## Se usa la pared del galpon que hay en diagonal a la salida, buscada por rayo
+## como el bloque del casco. Solo en headless: mueve el piche y corta la camara.
+func _probar_camara() -> void:
+	var t := mapa.pos_salida()
+	var ojo: Vector3 = t + Vector3.UP * impulso.CAM_ALTO
+	var esp := get_world_3d().direct_space_state
+	# la pared se busca barriendo azimuts: una diagonal clavada ya se rompio
+	# cuando el refactor movio la salida al marcador de la jaula. Sirve la
+	# primera pared vertical a menos de 12 m con piso llano a los DOS lados y
+	# parejo ENTRE SI (no contra t.y: la salida puede estar en alto, como ahora
+	# que va sobre la jaula, y el piche se para sobre el piso, no en la salida).
+	# El piso se mide con el techo del rayo justo encima del suelo, por si la
+	# zona queda bajo un alero que el rayo por defecto pararia antes.
+	var pared := Vector3.ZERO
+	var n := Vector3.ZERO
+	var piso_a := 0.0
+	var piso_b := 0.0
+	for paso in 16:
+		var ang := TAU * paso / 16.0
+		var dir := Vector3(sin(ang), 0.0, cos(ang))
+		var q := PhysicsRayQueryParameters3D.create(ojo, ojo + dir * 12.0)
+		q.exclude = mapa.excluir
+		var choque := esp.intersect_ray(q)
+		if choque.is_empty() or absf(choque["normal"].y) >= 0.5:
+			continue
+		var p: Vector3 = choque["position"]
+		var nn := Vector3(choque["normal"].x, 0.0, choque["normal"].z).normalized()
+		var a := mapa.altura_terreno(p.x + nn.x * 5.0, p.z + nn.z * 5.0, t.y + 1.6)
+		var b := mapa.altura_terreno(p.x - nn.x * 0.8, p.z - nn.z * 0.8, t.y + 1.6)
+		if absf(a - b) < 1.0:
+			pared = p
+			n = nn
+			piso_a = a
+			piso_b = b
+			break
+	assert(n != Vector3.ZERO, "no hay ninguna pared usable a 12 m de la salida para la prueba de camara")
+	print("camara: pared a %.2f m de la salida, normal %s" % [pared.distance_to(ojo), str(n)])
+
+	# lado A: piche delante de la pared, mirandola de frente (la camara queda a
+	# su espalda, hacia el lado abierto), y un encuadre legal ya asentado. El
+	# piche viene congelado y quieto del bloque anterior, asi que activo sigue
+	# puesto y la camara esta en modo mira.
+	piche.global_position = Vector3(pared.x + n.x * 5.0, piso_a + Util.RADIO, pared.z + n.z * 5.0)
+	await get_tree().process_frame     # que _process saque a impulso de "enjaulado"
+	impulso.mira = atan2(-n.x, -n.z)
+	impulso.encuadrar()
+	for i in 10:
+		await get_tree().process_frame
+
+	# lado B: el piche cruza al otro lado; la camara real quedo del lado viejo y
+	# tiene que cruzar EN SECO, no arrastrarse por dentro de la pared. Sin el
+	# clamp de la posicion real se median 16 frames tapada y 5.5 m de hondo; con
+	# el clamp, cero. Se miran 40 frames: el lerp converge en ~12, el resto es
+	# colchon para que el numero no dependa del dt de la maquina.
+	piche.global_position = Vector3(pared.x - n.x * 0.8, piso_b + Util.RADIO, pared.z - n.z * 0.8)
+	var tapada := 0
+	var hondo := 0.0
+	for i in 40:
+		await get_tree().process_frame
+		var desde: Vector3 = impulso.origen_camara()
+		var q2 := PhysicsRayQueryParameters3D.create(desde, camara.global_position)
+		q2.exclude = mapa.excluir
+		var tapa := esp.intersect_ray(q2)
+		if tapa:
+			tapada += 1
+			hondo = maxf(hondo, tapa["position"].distance_to(camara.global_position))
+	print("camara: tapada en %d de 40 frames, hasta %.2f m detras de la pared" % [tapada, hondo])
+	assert(tapada <= 1, "la camara se arrastra por dentro de la pared en vez de cruzar en seco")
+
+	# se deja todo como arranca un mapa: piche en la salida, mira a la meta
+	_poner_piche(mapa.pos_salida(), false)
+	impulso.reset(mapa.pos_salida(), mapa.pos_meta())
+	impulso.encuadrar()
+
+
 func _tecla(codigo: Key, apretada: bool) -> void:
 	var e := InputEventKey.new()
 	e.keycode = codigo
 	e.pressed = apretada
 	Input.parse_input_event(e)
+
+
+## Cuanto vuela el impulso a tope, en metros de suelo. Integra el MISMO modelo
+## de vuelo que aplica la fisica (Util.trayectoria), sobre suelo plano y sin
+## viento: sale el alcance limpio del salto, sin dispersion, sin rebotes y sin
+## que el numero dependa de donde este parado el piche. Es la medida que hay
+## que mirar al tocar VEL_MAX o LOFT en impulso.gd.
+func _alcance_impulso(f := 1.0) -> float:
+	var rapidez: float = lerpf(impulso.VEL_MIN, impulso.VEL_MAX, pow(f, impulso.CURVA))
+	var v: Vector3 = impulso.direccion() * rapidez
+	var giro := clampf(v.normalized().y * 2.2, 0.25, 1.0)
+	var llano := func(_x: float, _z: float) -> float: return 0.0
+	var puntos := Util.trayectoria(Vector3.ZERO, v, giro, Vector3.ZERO, llano)
+	var fin: Vector3 = puntos[puntos.size() - 1]
+	return Vector2(fin.x, fin.z).length()
 
 
 ## Lo que se comprueba en CADA mapa que se carga, sea cual sea: que la salida
@@ -830,6 +1087,23 @@ func _check_mapa() -> void:
 	if mapa.tiene_meta():
 		# la siembra va por el camino salida-meta: sin meta no hay camino
 		assert(mapa.basura.size() > 0, "%s: se quedo sin basura que recoger" % mapa.name)
+		# la basura se siembra donde se puede ir a buscar: sobre el nivel del
+		# agua y a cielo abierto (no en la bodega, vista por un hueco pero
+		# inalcanzable)
+		for pieza in mapa.basura:
+			assert(pieza.global_position.y > mapa.NIVEL_PERDIDO,
+				"%s: hay basura sembrada en el mar o la bodega" % mapa.name)
+		# y ningun molde plano: eran el flickering del playtest
+		for molde in mapa._moldes:
+			var s: Vector3 = (Transform3D(molde.global_transform.basis, Vector3.ZERO)
+				* molde.mesh.get_aabb()).size.abs()
+			assert(minf(s.x, minf(s.y, s.z)) >= mapa.MOLDE_MIN,
+				"%s: quedo un molde plano en el mazo de basura" % mapa.name)
+		# la meta es SUBIRSE a la camioneta: encima y posado cuenta; al lado,
+		# debajo, o pasandole por arriba a toda velocidad, no
+		# se prueba justo en el borde de la condicion de altura, no en el techo:
+		# el sitio donde uno se sube de verdad es el piso de la caja, y ahi es
+		# donde fallaba -el umbral estaba 18 cm por encima de ese piso-
 		var caja: AABB = mapa.caja_meta()
 		if mapa.meta_se_mueve():
 			# se le corre: alcanza con arrimarse, y de lejos no vale
@@ -873,6 +1147,30 @@ func _check_mapa() -> void:
 		print("salida: el piche queda %.2f m sobre el suelo (y=%.2f)"
 			% [sobre, piche.global_position.y])
 		assert(absf(sobre - Util.RADIO) < 0.5, "%s: el piche no arranca apoyado" % mapa.name)
+	# El mar sale de la malla del mapa, no de un numero a mano: mover o cambiar
+	# el glb no deja el chapuzon sonando a la altura equivocada. Solo el muelle
+	# trae "Mar" -altura_mar() da NAN en cualquier mapa que no lo traiga-, asi
+	# que esto no se exige en el Cerro ni en el que venga despues sin agua.
+	if not is_nan(mapa.altura_mar()):
+		# El muelle esta A NIVEL del agua: la salida y la superficie del mar
+		# salen los dos a la misma altura, asi que distinguirlos por y es
+		# imposible y hay que preguntar por la malla. Se barre un anillo
+		# alrededor de la salida y se cuenta: tiene que haber de las dos cosas,
+		# o el detector no esta distinguiendo nada.
+		var mojados := 0
+		var secos := 0
+		for r in [25.0, 55.0, 95.0]:
+			for i in 12:
+				var a := TAU * i / 12.0
+				if mapa.hay_agua(t.x + cos(a) * r, t.z + sin(a) * r):
+					mojados += 1
+				else:
+					secos += 1
+		print("sonido: el mar y la salida estan los dos a y=%.2f; de 36 sondeos alrededor de la salida, %d dan agua y %d dan firme"
+			% [mapa.altura_mar(), mojados, secos])
+		assert(not mapa.hay_agua(t.x, t.z), "la salida se toma por agua: sonaria a chapuzon")
+		assert(mojados > 0, "no se reconoce el mar en ningun lado: nunca sonaria el chapuzon")
+		assert(secos > 0, "todo el mapa se toma por agua")
 	print("mapa %d/%d %s: salida %s | meta %s | %d m%s"
 		% [indice + 1, mapas.size(), mapa.name, str(t.round()), str(b.round()),
 		   roundi(Vector2(t.x - b.x, t.z - b.z).length()),
@@ -935,8 +1233,50 @@ func _self_check() -> void:
 	assert(_angulo_rueda > antes, "el piche no rueda")
 	assert(is_zero_approx(_eje_rueda.dot(piche.linear_velocity.normalized())),
 		"la cara plana del disco no queda perpendicular a la marcha")
+	# y en vuelo la voltereta es a ritmo fijo, no la rodada aparente (que con
+	# el modelo agrandado seria casi nula y el piche volaria tieso)
+	_en_aire = true
+	var en_tierra := _angulo_rueda
+	_escalar_vista(6.0, 0.1)
+	var vuelta := _angulo_rueda - en_tierra
+	print("voltereta en vuelo: %.2f rad en 0.1 s (GIRO_VUELO=%.1f)" % [vuelta, GIRO_VUELO])
+	assert(absf(vuelta - GIRO_VUELO * 0.1) < 0.001, "el piche no da la voltereta en vuelo")
+	_en_aire = false
 	piche.linear_velocity = Vector3.ZERO
 	_angulo_rueda = 0.0
+	# --- sonido ---
+	# Que este todo cargado y enrutado: si un .import se rompe o alguien
+	# renombra un bus, el juego sigue corriendo MUDO y no se entera nadie.
+	var males := sonido.revisar()
+	assert(males.is_empty(), "sonido: " + ", ".join(males))
+	# Los bucles viven en el .import, no en el codigo, asi que no se ven al leer
+	# y se pierden en cualquier reimportacion. La musica y el ambiente TIENEN que
+	# dar la vuelta; los golpes, justo al reves, o se quedan sonando para siempre.
+	for nom in ["Musica", "Olas", "Gaviotas"]:
+		var largo: AudioStreamOggVorbis = sonido.get_node(nom).stream
+		assert(largo.loop, "%s no esta en bucle" % nom)
+	var giro: AudioStreamWAV = sonido.get_node("Vuelo").stream
+	assert(giro.loop_mode == AudioStreamWAV.LOOP_FORWARD,
+		"el giro en el aire no da la vuelta: se oiria un corte cada 2.4 s")
+	for nom in ["Impulso", "Aterrizaje", "Jaula", "Chapuzon", "Boton"]:
+		var corto: AudioStreamWAV = sonido.get_node(nom).stream
+		assert(corto.loop_mode == AudioStreamWAV.LOOP_DISABLED,
+			"%s se quedaria sonando en bucle" % nom)
+	# el brinco son las tres tomas del pack original: si queda una, cansa enseguida
+	var tomas: AudioStreamRandomizer = sonido.get_node("Salto").stream
+	assert(tomas.streams_count == 3, "el brinco perdio tomas: quedan %d" % tomas.streams_count)
+	# El bucle de vuelo, por la via real -la misma llamada que hace _process-, no
+	# tocando el reproductor a mano: lo que se prueba es que arranque solo con la
+	# velocidad y, sobre todo, que se CORTE. Una bandera de _process que se queda
+	# pegada es la trampa clasica de este archivo.
+	sonido.vuelo(26.0)
+	var sonaba: bool = sonido.get_node("Vuelo").playing
+	sonido.vuelo(0.0)
+	var callado: bool = not sonido.get_node("Vuelo").playing
+	print("sonido: el giro en el aire suena a 26 m/s (%s) y calla a 0 m/s (%s)"
+		% [sonaba, callado])
+	assert(sonaba, "el giro en el aire no arranca al volar")
+	assert(callado, "el giro en el aire se queda pegado con el piche parado")
 	var vuelve := piche.global_position
 	# sin stamina no hay impulso
 	var stamina_previa := stamina
@@ -963,6 +1303,41 @@ func _self_check() -> void:
 	stamina = stamina_salto
 	print("modelo %s | caja %s | diametro %.2f u"
 		% [vista.scene_file_path.get_file(), str(_caja_piche), _diam_piche])
+	# el texto de la G: enjaulado se ve, y es texto de pantalla (con tilde).
+	# El texto lo pone _process: hay que dejar pasar un frame para que corra
+	# (listo ya esta en true), si no el assert lee el Label recien nacido.
+	# Va ANTES del bloque de pausa/reintentar: ese bloque recarga el mapa
+	# entero y este solo lee el estado con el que arranco _self_check.
+	if mapa.tiene_jaula():
+		await get_tree().process_frame
+		await get_tree().process_frame
+		assert(ayuda.text != "", "no hay texto de ayuda dentro de la jaula")
+	# El salto tiene que cruzar un hueco entre plataformas y ninguna cosa mas.
+	# Los dos topes son el encargo: por debajo del primero no se cruza nada y
+	# hay que ir andando; por encima del segundo un solo impulso a tope se pasa
+	# las plataformas de largo, que es de lo que venimos.
+	var alcance := _alcance_impulso()
+	print("alcance del impulso: barra 1/4 %.1f m | 1/2 %.1f m | 3/4 %.1f m | llena %.1f m"
+		% [_alcance_impulso(0.25), _alcance_impulso(0.5),
+		   _alcance_impulso(0.75), alcance])
+	assert(alcance > 9.0, "el impulso a tope no cruza ni un hueco")
+	assert(alcance < 20.0, "el impulso a tope se pasa las plataformas de largo")
+
+	# el pause: Tab congela, Tab suelta, y reintentar rehace el mapa actual
+	# entero -por eso se comprueba que la jaula siga en pie despues, si el
+	# mapa la trae-
+	pausa.habilitada = true
+	pausa.alternar()
+	assert(get_tree().paused and pausa.abierta(), "Tab no pausa")
+	pausa.alternar()
+	assert(not get_tree().paused and not pausa.abierta(), "Tab no despausa")
+	pausa.habilitada = false
+	await _reiniciar()
+	assert(is_equal_approx(stamina, STAMINA_MAX), "reintentar no repone la stamina")
+	if mapa.tiene_jaula():
+		assert(is_instance_valid(_jaula) and _jaula.puerta_entera() and _jaula.cerrada(),
+			"reintentar no devuelve al piche a la jaula")
+
 	print("self-check OK")
 	# Las pruebas de abajo mueven el piche de verdad y son del MUELLE: la jaula
 	# fisica y el casco del barco. En otro mapa no hay ni una cosa ni la otra.
@@ -979,12 +1354,18 @@ func _self_check() -> void:
 		# primer impulso choca, la tira y rebota dentro de la jaula.
 		await get_tree().physics_frame
 		await get_tree().physics_frame
+		# la distancia se mide en el MAXIMO del vuelo, no al descansar: si la
+		# dispersion manda el impulso al agua, se repone en _desde (ver
+		# mapa.perdida en _physics_process) y la posicion final vuelve a ser
+		# el centro de la jaula
+		var d := 0.0
 		for i in 900:
+			d = maxf(d, piche.global_position.distance_to(_jaula.global_position))
 			if quieto:
 				break
 			await get_tree().physics_frame
-		var d := piche.global_position.distance_to(_jaula.global_position)
-		print("primer impulso: puerta abajo y el piche sale a %.2f m de la jaula" % d)
+		d = maxf(d, piche.global_position.distance_to(_jaula.global_position))
+		print("primer impulso: puerta abajo y el piche llega a %.2f m de la jaula" % d)
 		assert(not _jaula.puerta_entera(), "el primer impulso no tiro la puerta")
 		assert(not _jaula.cerrada(), "el hueco no quedo abierto")
 		# que SALIO de la jaula, no cuantos metros: la media diagonal de la jaula
@@ -1016,9 +1397,60 @@ func _self_check() -> void:
 		piche.linear_velocity = dir * 26.0   # el vector ENTERO, ver CLAUDE.md
 		quieto = false
 		var tras := 0.0
+		var previa := piche.global_position
 		for i in 90:
 			await get_tree().physics_frame
+			# el disparo termina cuando algo congela al piche o lo teletransporta
+			# (la red de rescate lo repone en la salida, que queda del OTRO lado
+			# del plano del casco: medir eso ya no es medir la bala, y daba un
+			# falso "atraviesa el casco" de 8.54 m)
+			if piche.freeze or piche.global_position.distance_to(previa) > 2.0:
+				break
+			previa = piche.global_position
 			tras = maxf(tras, (piche.global_position - plano).dot(dir))
 		print("casco: disparada a 26 m/s, el piche pasa %.2f m del plano del casco" % tras)
 		assert(tras < 1.0, "el piche atraviesa el casco del barco")
+		# el rectangulo del muelle: por el pasillo central ya no se cae al mar
+		# (coordenadas del muelle: esta prueba es de este mapa, no generica)
+		for punto in [Vector2(976, 712), Vector2(976, 716), Vector2(976, 720),
+				Vector2(972, 724), Vector2(972, 728), Vector2(972, 732)]:
+			var h := mapa.altura_terreno(punto.x, punto.y, 170.0)
+			assert(h > 166.3, "el muelle sigue teniendo huecos en (%s): h=%.2f" % [str(punto), h])
+		# la red de rescate: parado en el agua, el piche vuelve solo al ultimo suelo firme
+		# el punto firme del test va FUERA de la jaula y APOYADO por rayo: la
+		# red repone con _poner_piche(_firme), que reapoya por rayo, y dentro
+		# de la jaula el rayo miente (pela la plataforma y da la cubierta, 3 m
+		# abajo del piso del artista): tomando la salida como punto firme, el
+		# piche "volvia" al mismo x/z pero 3 m mas abajo y el assert fallaba
+		_poner_piche(mapa.pos_salida() + _jaula.fuera() * 3.0)
+		var firme_antes := _firme
+		piche.global_position = Vector3(900.0, mapa.NIVEL_PERDIDO - 0.1, 750.0)
+		piche.freeze = false
+		quieto = true
+		for i in 10:
+			await get_tree().physics_frame
+		print("rescate: desde el agua vuelve a %s" % str(piche.global_position.round()))
+		assert(piche.global_position.distance_to(firme_antes) < 2.0,
+			"el piche no vuelve del agua")
+
+		# Que el juego LLAME al sonido, no solo que el sonido cargue. Los
+		# enganches son una linea suelta en medio de _process o de _saltar: se
+		# pierden en cualquier refactor y el juego se queda mudo sin romper un
+		# solo assert. Va DENTRO del bloque de headless, y no fuera, porque lo
+		# que mueve estos contadores es la prueba de arriba: con ventana no se
+		# impulsa nada y daban cero por no haber jugado, no por estar rotos.
+		# Es de la jaula (ver el "if" que envuelve este bloque) y no de
+		# _check_mapa(), asi que solo corre en mapas con jaula -hoy, el muelle-;
+		# un Cerro sin jaula no reclama estos sonidos.
+		print("sonido: disparos tras la prueba -> impulso %d, salto %d, vuelo %d, aterrizaje %d, portazo %d"
+			% [sonido.disparos("impulso"), sonido.disparos("salto"),
+			   sonido.disparos("vuelo"), sonido.disparos("aterrizaje"),
+			   sonido.disparos("portazo")])
+		assert(sonido.disparos("impulso") > 0, "el impulso no avisa al sonido")
+		assert(sonido.disparos("salto") > 0, "el brinco no avisa al sonido")
+		assert(sonido.disparos("portazo") > 0, "el portazo no avisa al sonido")
+		assert(sonido.disparos("vuelo") > 0, "volando no suena el giro en el aire")
+		assert(sonido.disparos("aterrizaje") > 0, "aterrizar no suena")
+
 		_poner_piche(mapa.pos_salida(), false)
+		await _probar_camara()

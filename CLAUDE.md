@@ -25,7 +25,7 @@ piche y la intro:
 
 ```
 "/c/Users/ivanu/Downloads/Godot_v4.6.3-stable_win64.exe/Godot_v4.6.3-stable_win64.exe" \
-  --headless --path . res://escenas/Juego.tscn --quit-after 4500
+  --headless --path . res://escenas/Juego.tscn --quit-after 12000
 ```
 
 La escena principal del proyecto es `Menu.tscn`, que no carga nada: sin nombrar
@@ -179,3 +179,10 @@ cruzando el encuadre, las dos por eso.
 - `scripts/impulso.gd` — apuntado, potencia, mando y camara.
 - `scripts/util.gd` — aerodinamica y mallas provisionales.
 - `scripts/jaula.gd` + `escenas/Jaula.tscn` — la jaula de salida, con su puerta.
+- `scripts/sonido.gd` + `escenas/Sonido.tscn` — musica, ambiente y efectos.
+  Se instancia en `Juego.tscn` y en `Menu.tscn`; se le llama hacia abajo
+  (`sonido.impulso(0.8)`) y nadie de fuera toca un `AudioStreamPlayer`.
+  Los `.wav`/`.ogg` de `sonidos/` son artefactos: se regeneran con los
+  guiones de `herramientas/`, explicados en `herramientas/SONIDO.md`.
+  **Los bucles viven en el `.import`, no en el codigo**, y son lo primero
+  que se pierde en una reimportacion: por eso hay asserts que los miran.
