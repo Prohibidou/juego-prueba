@@ -11,57 +11,60 @@ extends Node3D
 signal golpeado(velocidad: Vector3)
 
 # --- calibracion de la fuerza ---
-const VEL_MIN := 3.0        # un putt corto
-const VEL_MAX := 26.0       # un piche completo, no un drive de golf
-const CARGA_POR_SEG := 0.5  # 2 s de barra entera: antes era 0.9 s y todo salia a tope
+@export_group("Fuerza")
+@export_range(0.5, 15.0, 0.1) var VEL_MIN := 3.0        # un putt corto
+@export_range(5.0, 60.0, 0.5) var VEL_MAX := 26.0       # un piche completo, no un drive de golf
+@export_range(0.1, 3.0, 0.05) var CARGA_POR_SEG := 0.5  # 2 s de barra entera: antes era 0.9 s y todo salia a tope
 # La distancia va con el CUADRADO de la velocidad, asi que una barra lineal se
 # siente "todo o nada". Con CURVA<1 la barra se lee casi como distancia.
-const CURVA := 0.75
+@export_range(0.3, 2.0, 0.05) var CURVA := 0.75
 # Angulo de salida fijo: era un control (flechas, stick derecho y deslizador)
 # que se comia el arriba/abajo, y lo que se quiere ahi es mover al bicho.
-const LOFT := 22.0
+@export_range(0.0, 70.0, 1.0) var LOFT := 22.0
 # Cuanto mas cargas, mas lejos llega y menos control tienes. Sin esto la barra
 # no era una decision: siempre convenia el maximo. Va con el CUADRADO de la
 # fuerza, asi que medio golpe es casi exacto y el drive completo es una apuesta.
-const DISPERSA := 0.055     # rad de error a barra llena y desde la calle
+@export_range(0.0, 0.3, 0.005) var DISPERSA := 0.055     # rad de error a barra llena y desde la calle
 # --------------------------------
 
 # --- direccion en el aire ---
 # Un presupuesto corto por golpe: corrige una salida torcida, no dibuja la
 # trayectoria entera. Lo gasta juego.gd, que es quien ve si la bola vuela.
-const TIMON_TACTIL := 0.03  # cuanto desvia un pixel de arrastre
-const TIMON_VUELVE := 2.0   # el arrastre se suelta solo al soltar el dedo
+@export_group("Timon")
+@export_range(0.0, 0.2, 0.005) var TIMON_TACTIL := 0.03  # cuanto desvia un pixel de arrastre
+@export_range(0.0, 10.0, 0.1) var TIMON_VUELVE := 2.0   # el arrastre se suelta solo al soltar el dedo
 # ----------------------------
 
 # --- camara ---
 # Pegada al piche: es un bicho pequeno, no una bola de golf, y de lejos se
 # perdia de vista aunque _escalar_vista lo agrande en pantalla.
-const CAM_ALTO := 0.55         # fija: la misma altura siempre, quieta o en marcha
-const CAM_ATRAS_TIRO := 1.1
+@export_group("Camara")
+@export_range(0.0, 5.0, 0.05) var CAM_ALTO := 0.55         # fija: la misma altura siempre, quieta o en marcha
+@export_range(0.2, 10.0, 0.1) var CAM_ATRAS_TIRO := 1.1
 # Dentro de la jaula esa camara cae entre los barrotes y no se ve nada: se sale
 # fuera para que se vea la jaula entera y por donde esta la puerta.
-const CAM_ALTO_JAULA := 2.4
-const CAM_ATRAS_JAULA := 4.6
+@export_range(0.0, 10.0, 0.1) var CAM_ALTO_JAULA := 2.4
+@export_range(0.5, 20.0, 0.1) var CAM_ATRAS_JAULA := 4.6
 # La camara se aleja con la velocidad: encuadra igual un putt que un piche
 # fuerte, y el ensanchado del fov da la sensacion de velocidad.
-const CAM_ATRAS_MIN := 1.2
-const CAM_ATRAS_MAX := 3.2
-const CAM_FOV := 62.0
-const CAM_FOV_MAX := 74.0
-const CAM_VEL_REF := 24.0      # m/s a los que la camara esta del todo abierta: va con VEL_MAX
-const CAM_UMBRAL_QUIETO := 0.3 # m/s: por debajo, "quieto" para la camara (igual que QUIETA en juego.gd)
+@export_range(0.2, 10.0, 0.1) var CAM_ATRAS_MIN := 1.2
+@export_range(0.2, 20.0, 0.1) var CAM_ATRAS_MAX := 3.2
+@export_range(30.0, 110.0, 1.0) var CAM_FOV := 62.0
+@export_range(30.0, 120.0, 1.0) var CAM_FOV_MAX := 74.0
+@export_range(1.0, 60.0, 0.5) var CAM_VEL_REF := 24.0      # m/s a los que la camara esta del todo abierta: va con VEL_MAX
+@export_range(0.0, 3.0, 0.05) var CAM_UMBRAL_QUIETO := 0.3 # m/s: por debajo, "quieto" para la camara (igual que QUIETA en juego.gd)
 # Rumbo con tope de giro: un tiron del stick puede cambiar la velocidad de la
 # bola de golpe (90 grados o mas), pero la camara y la mira no saltan con
 # ella, viran a este ritmo maximo. Sin esto, un cambio brusco de direccion
 # se notaba como un salto de camara en vez de un giro.
-const CAM_GIRO_MAX := 3.5      # rad/s
-const CAM_SUAVIZADO := 14.0
-const CAM_FOV_SUAVIZADO := 4.0 # el fov va mas lento que la posicion: asi se nota
+@export_range(0.5, 12.0, 0.1) var CAM_GIRO_MAX := 3.5      # rad/s
+@export_range(1.0, 40.0, 0.5) var CAM_SUAVIZADO := 14.0
+@export_range(0.5, 20.0, 0.5) var CAM_FOV_SUAVIZADO := 4.0 # el fov va mas lento que la posicion: asi se nota
 # Con el muelle de por medio (galpones, el barco, la jaula) la camara detras
 # del piche se metia dentro de la primera pared que encontraba. Un rayo desde
 # el piche hasta el punto ideal la trae para adelante hasta justo antes de esa
 # pared, en vez de dejarla atravesarla.
-const CAM_COLISION_MARGEN := 0.25  # cuanto se aparta de la pared, para no clavar el lente
+@export_range(0.0, 2.0, 0.05) var CAM_COLISION_MARGEN := 0.25  # cuanto se aparta de la pared, para no clavar el lente
 # --------------
 
 # --- mando ---
@@ -69,13 +72,15 @@ const CAM_COLISION_MARGEN := 0.25  # cuanto se aparta de la pared, para no clava
 # stick derecho tambien gira la mira, para apuntar sin moverse. El impulso es
 # G (o la A del mando); el salto va aparte, en juego.gd, con el espacio. No se
 # usa "ui_accept" porque lleva dentro el espacio, que ahora es saltar.
-const ZONA_MUERTA := 0.2
-const APUNTA_GIRO := 1.6       # rad/s de mira con el stick derecho al tope
-const GIRO_ANDAR := 2.2        # rad/s de mira con A/D o el stick izquierdo
+@export_group("Mando")
+@export_range(0.0, 0.9, 0.01) var ZONA_MUERTA := 0.2
+@export_range(0.2, 8.0, 0.1) var APUNTA_GIRO := 1.6       # rad/s de mira con el stick derecho al tope
+@export_range(0.2, 8.0, 0.1) var GIRO_ANDAR := 2.2        # rad/s de mira con A/D o el stick izquierdo
 # -------------
 
-const LARGO_MIRA := 60.0    # metros de linea de apuntado
-const PASOS_MIRA := 30
+@export_group("Mira")
+@export_range(5.0, 200.0, 1.0) var LARGO_MIRA := 60.0    # metros de linea de apuntado
+@export_range(4, 120, 1) var PASOS_MIRA := 30
 
 var mira := 0.0
 var fuerza := 0.0
