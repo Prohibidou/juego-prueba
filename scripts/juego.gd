@@ -796,21 +796,37 @@ func _probar_camara() -> void:
 	var t := mapa.pos_salida()
 	var ojo: Vector3 = t + Vector3.UP * impulso.CAM_ALTO
 	var esp := get_world_3d().direct_space_state
-	var q := PhysicsRayQueryParameters3D.create(ojo, ojo + Vector3(1, 0, 1).normalized() * 8.0)
-	q.exclude = mapa.excluir
-	var choque := esp.intersect_ray(q)
-	assert(not choque.is_empty(), "no aparece la pared del galpon en diagonal a la salida")
-	var pared: Vector3 = choque["position"]
-	assert(absf(choque["normal"].y) < 0.5, "el rayo de la salida no da en una pared vertical")
-	var n := Vector3(choque["normal"].x, 0.0, choque["normal"].z).normalized()
+	# la pared se busca barriendo azimuts: una diagonal clavada ya se rompio
+	# cuando el refactor movio la salida al marcador de la jaula. Sirve la
+	# primera pared vertical a menos de 12 m con piso llano a los DOS lados y
+	# parejo ENTRE SI (no contra t.y: la salida puede estar en alto, como ahora
+	# que va sobre la jaula, y el piche se para sobre el piso, no en la salida).
+	# El piso se mide con el techo del rayo justo encima del suelo, por si la
+	# zona queda bajo un alero que el rayo por defecto pararia antes.
+	var pared := Vector3.ZERO
+	var n := Vector3.ZERO
+	var piso_a := 0.0
+	var piso_b := 0.0
+	for paso in 16:
+		var ang := TAU * paso / 16.0
+		var dir := Vector3(sin(ang), 0.0, cos(ang))
+		var q := PhysicsRayQueryParameters3D.create(ojo, ojo + dir * 12.0)
+		q.exclude = mapa.excluir
+		var choque := esp.intersect_ray(q)
+		if choque.is_empty() or absf(choque["normal"].y) >= 0.5:
+			continue
+		var p: Vector3 = choque["position"]
+		var nn := Vector3(choque["normal"].x, 0.0, choque["normal"].z).normalized()
+		var a := mapa.altura_terreno(p.x + nn.x * 5.0, p.z + nn.z * 5.0, t.y + 1.6)
+		var b := mapa.altura_terreno(p.x - nn.x * 0.8, p.z - nn.z * 0.8, t.y + 1.6)
+		if absf(a - b) < 1.0:
+			pared = p
+			n = nn
+			piso_a = a
+			piso_b = b
+			break
+	assert(n != Vector3.ZERO, "no hay ninguna pared usable a 12 m de la salida para la prueba de camara")
 	print("camara: pared a %.2f m de la salida, normal %s" % [pared.distance_to(ojo), str(n)])
-
-	# piso a los DOS lados, con el techo del rayo justo encima del suelo: por si
-	# esa zona queda bajo un alero, que el rayo por defecto pararia en el techo
-	var piso_a := mapa.altura_terreno(pared.x + n.x * 5.0, pared.z + n.z * 5.0, t.y + 1.6)
-	var piso_b := mapa.altura_terreno(pared.x - n.x * 0.8, pared.z - n.z * 0.8, t.y + 1.6)
-	assert(absf(piso_a - t.y) < 1.0 and absf(piso_b - t.y) < 1.0,
-		"no hay piso a ambos lados de la pared para la prueba de camara")
 
 	# lado A: piche delante de la pared, mirandola de frente (la camara queda a
 	# su espalda, hacia el lado abierto), y un encuadre legal ya asentado. El
