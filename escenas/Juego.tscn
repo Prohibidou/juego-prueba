@@ -8,6 +8,7 @@
 [ext_resource type="PackedScene" uid="uid://nv4bpr3ue734" path="res://escenas/Piche.tscn" id="6_jv425"]
 [ext_resource type="PackedScene" path="res://escenas/Pausa.tscn" id="7_pausa"]
 [ext_resource type="PackedScene" uid="uid://c3nqhx8vsgm1r" path="res://escenas/Sonido.tscn" id="8_sonido"]
+[ext_resource type="PackedScene" path="res://escenas/ContadorBasura.tscn" id="9_contador"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_l3i6u"]
 sky_top_color = Color(0.32, 0.55, 0.9, 1)
@@ -141,6 +142,8 @@ offset_right = -24.0
 offset_bottom = 55.0
 focus_mode = 0
 text = "DROP +1"
+
+[node name="Contador" parent="UI" instance=ExtResource("9_contador")]
 
 [node name="Pausa" parent="." instance=ExtResource("7_pausa")]
 

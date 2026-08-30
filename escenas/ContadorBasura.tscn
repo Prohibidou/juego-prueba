@@ -1,0 +1,31 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/contador_basura.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://ui/basura_contador.png" id="2_icono"]
+
+[node name="ContadorBasura" type="Control"]
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 172.0
+offset_bottom = 84.0
+pivot_offset = Vector2(76, 32)
+mouse_filter = 2
+script = ExtResource("1_script")
+
+[node name="Icono" type="TextureRect" parent="."]
+custom_minimum_size = Vector2(56, 56)
+offset_right = 56.0
+offset_bottom = 56.0
+texture = ExtResource("2_icono")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Cifra" type="Label" parent="."]
+offset_left = 64.0
+offset_right = 152.0
+offset_bottom = 56.0
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 7
+theme_override_font_sizes/font_size = 28
+vertical_alignment = 1
+text = "0/0"
