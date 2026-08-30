@@ -17,6 +17,10 @@ const FRENO_ATERRIZAJE := 0.32   # fraccion de velocidad que le queda al tocar
 # sobrevive al freno igual podia reptar mas de la cuenta. A partir de este
 # tiempo EN EL SUELO (no cuenta el vuelo) se corta y se da por quieta.
 const CAIDA_MAX := 0.5
+# Por encima de esta velocidad el impulso todavia esta en lo suyo y el mando no
+# lo corta: cancelar un lanzamiento a 20 m/s se siente a tiron. Por debajo, el
+# piche ya viene rodando y el jugador puede tomarlo cuando quiera.
+@export_range(1.0, 26.0, 0.5) var VEL_TOMAR := 12.0
 const VEL_MARCA := 15.0
 const MAX_MARCAS := 30
 # --- direccion en el aire ---
@@ -518,6 +522,19 @@ func _physics_process(dt: float) -> void:
 		vel = piche.linear_velocity
 	_en_aire = volando
 
+	# EL JUGADOR MANDA POR ENCIMA DE LA FISICA. Mientras el piche rueda o
+	# rebota, apretar una direccion lo toma ahi mismo; no hay que esperar a que
+	# se detenga solo. Eso ultimo era la regla de golf de "la bola tiene que
+	# parar antes del proximo tiro", y en una pendiente no pasaba nunca: se
+	# rodaba cuesta abajo con los controles bloqueados hasta dar con un llano.
+	#
+	# El rebote se conserva: si no tocas nada, el impulso termina de rodar como
+	# siempre. Lo que cambia es que ya no estas obligado a mirarlo.
+	if (not volando and not _empujando and not impulso.cine
+			and vel.length() < VEL_TOMAR and impulso.mando() != Vector3.ZERO):
+		_tomar_control(pos)
+		return
+
 	# mientras abre la puerta la velocidad la pone el guion, no la fisica: es el
 	# mismo disparo a camara lenta, asi que al soltarse sigue como si nada
 	if _empujando:
@@ -572,6 +589,22 @@ func _physics_process(dt: float) -> void:
 	else:
 		_t_lento = 0.0
 		_t_caida = 0.0
+
+
+## El jugador agarra el piche a mitad de rodada. Es lo mismo que asentarse pero
+## sin congelarlo: no se le toca la velocidad, porque _conducir() la reescribe
+## en el mismo tick con lo que diga el mando.
+func _tomar_control(pos: Vector3) -> void:
+	quieto = true
+	_vel_andar = 0.0
+	piche.angular_velocity = Vector3.ZERO
+	_t_lento = 0.0
+	_t_caida = 0.0
+	_ultimo = Vector2(pos.x - _desde.x, pos.z - _desde.z).length()
+	if _enjaulado():
+		# igual que al asentarse: nunca dejarlo encerrado
+		_jaula.tirar_puerta(PORTAZO_EMPUJE, PORTAZO_SUELTA)
+		_jaula.abrir()
 
 
 ## El stick izquierdo rueda el piche mientras esta parado. En el aire ese mismo
