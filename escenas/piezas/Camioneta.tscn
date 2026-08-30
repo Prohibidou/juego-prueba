@@ -1,0 +1,10 @@
+[gd_scene format=3 uid="uid://dbln8kdn6srke"]
+
+[ext_resource type="Script" uid="uid://dbln8kdnyg7u4" path="res://scripts/camioneta.gd" id="1_cam"]
+[ext_resource type="PackedScene" uid="uid://d2guj0gp1q31o" path="res://resources-3d/PGJ_CamionetaConBarril1.glb" id="2_modelo"]
+
+[node name="Camioneta" type="PathFollow3D" unique_id=1990317191]
+script = ExtResource("1_cam")
+
+[node name="Modelo" parent="." unique_id=749659516 instance=ExtResource("2_modelo")]
+transform = Transform3D(-1, 0, -8.742278e-08, 0, 1, 0, 8.742278e-08, 0, -1, 0, 0, 0)

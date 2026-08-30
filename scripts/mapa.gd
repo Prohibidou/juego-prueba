@@ -39,6 +39,9 @@ const VEL_SUBIDO := 6.0        # m/s por encima de los cuales va de paso
 # Pieza provisional: es una escena para poder cambiarla por el modelo bueno
 # arrastrandolo encima, cosa que con un MeshInstance3D hecho a mano no se puede.
 const ANIMAL := "res://escenas/piezas/Animal.tscn"
+const ROCA := "res://escenas/piezas/Roca.tscn"
+# Radio libre alrededor del piche donde no se suelta ninguna piedra.
+const ROCA_SEGURO := 12.0
 const COLOR_ANIMAL := Color(0.85, 0.82, 0.78)   # para el reventon al aturdirlo
 const RADIO_BASURA := 22.0     # cuanto se aparta la basura del camino a la meta
 
@@ -59,6 +62,22 @@ const INTENTOS_SIEMBRA := 6    # tiros de dado por pieza antes de rendirse
 # es donde se ve el mapa al que pertenece; antes vivia en una tabla paralela.
 @export var viento := Vector3(1.0, 0, -0.5)
 
+@export_group("Desprendimiento")
+## Segundos entre piedra y piedra. En 0 no se desprende ninguna: un mapa sin
+## cerro encima no tiene de donde tirarlas.
+@export_range(0.0, 20.0, 0.25) var rocas_cada := 0.0
+## De que tamano salen. Distintas a proposito: una de 40 cm se esquiva y una de
+## 3 m hay que verla venir.
+@export_range(0.2, 5.0, 0.1) var roca_min := 0.4
+@export_range(0.2, 6.0, 0.1) var roca_max := 2.4
+## Cuanto se reparten alrededor del punto de suelta, para que no caigan todas
+## por la misma linea.
+@export_range(0.0, 60.0, 1.0) var roca_dispersa := 18.0
+## Empujon inicial ladera abajo. Sin el se quedan quietas en una cima plana.
+@export_range(0.0, 20.0, 0.5) var roca_empuje := 4.0
+## A cuantos metros por debajo del punto de suelta se dan por perdidas.
+@export_range(10.0, 400.0, 5.0) var roca_muere := 90.0
+
 var excluir: Array[RID] = []   # el piche, para que no la pisen los rayos
 
 var _escenario: Node3D
@@ -77,6 +96,11 @@ var _punto_meta := Vector3.ZERO
 var _techo := TECHO             # el de verdad lo mide preparar() con la caja del mapa
 var animales: Array = []
 var basura: Array = []
+var rocas: Array = []
+# La camioneta que se va, si el mapa la trae. Cuando esta, ELLA es la meta: se
+# le pide su caja cada vez, porque se mueve.
+var _camioneta: Camioneta
+var _t_roca := 0.0
 
 var _moldes: Array[MeshInstance3D] = []
 
@@ -171,16 +195,30 @@ func preparar() -> void:
 		print("meta: %s en %s, caja %s" % [META,
 			str(_meta.get_center().round()), str(_meta.size.round())])
 
+	# La camioneta NPC, si la hay: cuelga de un Path3D de la escena del mapa.
+	# Cuando esta, la meta es ella y no una malla quieta del glb.
+	for c in find_children("*", "Camioneta", true, false):
+		_camioneta = c as Camioneta
+		_camioneta.suelo(Callable(self, "altura_terreno"))
+		break
+
 	await get_tree().physics_frame
 	await get_tree().physics_frame
-	print("mapa listo: %d mallas con colision, %s m" % [n, str(_aabb(_escenario).size.round())])
+	print("mapa listo: %d mallas con colision, %s m%s" % [n,
+		str(_aabb(_escenario).size.round()),
+		" | camioneta NPC" if _camioneta else ""])
 
 
 func pos_salida() -> Vector3:
 	return _salida
 
 
+## El punto al que hay que llegar. Con la camioneta NPC se recalcula cada vez:
+## el HUD, la camara y la mira tienen que seguirla mientras se va.
 func pos_meta() -> Vector3:
+	if _camioneta:
+		var c := _camioneta.caja()
+		return Vector3(c.get_center().x, c.position.y + c.size.y, c.get_center().z)
 	return _punto_meta
 
 
@@ -190,14 +228,25 @@ func hay_suelo(x: float, z: float) -> bool:
 	return not is_nan(_altura_cruda(x, z))
 
 
-## Trae camioneta, o sea que se puede terminar.
+## Trae camioneta, o sea que se puede terminar. Puede ser la NPC que se va o
+## una malla quieta del glb.
 func tiene_meta() -> bool:
-	return _meta.size != Vector3.ZERO
+	return _camioneta != null or _meta.size != Vector3.ZERO
 
 
-## La caja de la camioneta, en mundo. Solo vale si tiene_meta().
+## Se va sola: alcanzarla es perseguirla, no llegar a un sitio.
+func meta_se_mueve() -> bool:
+	return _camioneta != null
+
+
+## La caja de la camioneta, en mundo, AHORA. Si se mueve se recalcula: una caja
+## cacheada al arrancar dejaria la meta clavada donde ya no esta.
 func caja_meta() -> AABB:
-	return _meta
+	return _camioneta.caja() if _camioneta else _meta
+
+
+func camioneta() -> Camioneta:
+	return _camioneta
 
 
 ## Trae jaula de salida: el piche arranca encerrado y va la cinematica del
@@ -223,6 +272,11 @@ func ir_a() -> void:
 	# barco. El piche SI se apoya en ella, porque las formas van a doble cara.
 	# De ahi salio la fama de que este sitio "cae sobre un hueco del casco".
 	_salida = $Salida.position
+	if _camioneta:
+		_punto_meta = pos_meta()
+		_poblar_fauna()
+		_poblar_basura()
+		return
 	if _meta.size == Vector3.ZERO:
 		# Sin meta el mapa se puede recorrer pero no terminar. No se corta: asi
 		# un mapa a medio armar igual se puede abrir y mirar.
@@ -316,6 +370,9 @@ func altura_suelo(x: float, z: float) -> float:
 ## y por encima de la caja. Y hay que haberse posado: pasarle por arriba
 ## volando a veinte metros por segundo no es subirse.
 func llego(pos: Vector3, vel := Vector3.ZERO) -> bool:
+	if _camioneta:
+		# se le corre: alcanza con arrimarse, no hay que embocar en la caja
+		return _camioneta.alcanzada(pos)
 	if _meta.size == Vector3.ZERO or vel.length() > VEL_SUBIDO:
 		return false
 	var c := _meta.get_center()
@@ -399,6 +456,71 @@ func _poblar_basura() -> void:
 		pieza.rotation.y = randf() * TAU
 		add_child(pieza)
 		basura.append(pieza)
+
+
+# ---------------------------------------------------------------------------
+# El desprendimiento: piedras que se sueltan en la cima y bajan rodando.
+# ---------------------------------------------------------------------------
+
+## Suelta una piedra cada `rocas_cada` segundos desde el marcador `Rocas`, si
+## el mapa lo trae. Las sueltas SE HACEN EN LA CIMA y bajan por fisica: nacer
+## a mitad de ladera se ve como un truco.
+func rodar_rocas(dt: float, lejos_de := Vector3.INF) -> void:
+	var cima := get_node_or_null("Rocas") as Node3D
+	if rocas_cada <= 0.0 or cima == null:
+		return
+	for i in range(rocas.size() - 1, -1, -1):
+		var r: Roca = rocas[i]
+		if not is_instance_valid(r):
+			rocas.remove_at(i)
+		elif r.global_position.y < cima.global_position.y - roca_muere:
+			r.queue_free()          # se fue por la ladera, ya no molesta
+			rocas.remove_at(i)
+	_t_roca -= dt
+	if _t_roca > 0.0:
+		return
+	_t_roca = rocas_cada
+	_soltar_roca(cima, lejos_de)
+
+
+func _soltar_roca(cima: Node3D, lejos_de: Vector3) -> void:
+	var p := cima.global_position + Vector3(
+		randf_range(-roca_dispersa, roca_dispersa), 0.0,
+		randf_range(-roca_dispersa, roca_dispersa))
+	# Nunca encima del piche: aparecer dentro de el es una muerte que no se
+	# pudo ver venir, y las piedras tienen que poder esquivarse.
+	if not is_inf(lejos_de.x) and Vector2(p.x - lejos_de.x, p.z - lejos_de.z).length() < ROCA_SEGURO:
+		return
+	var y := altura_terreno(p.x, p.z)
+	var radio := randf_range(roca_min, roca_max)
+	var roca: Roca = (load(ROCA) as PackedScene).instantiate()
+	roca.tamano(radio)
+	add_child(roca)
+	# apoyada en el suelo de la cima, no enterrada ni cayendo del cielo
+	roca.global_position = Vector3(p.x, y + radio, p.z)
+	# el empujon la manda ladera abajo: se mira donde baja el terreno alrededor
+	roca.linear_velocity = _cuesta_abajo(p.x, p.z) * roca_empuje
+	rocas.append(roca)
+
+
+## Hacia donde baja el terreno en este punto, en horizontal. Se sondea en cruz
+## y se apunta al vecino mas bajo: no hace falta la normal exacta, solo saber
+## para donde rueda.
+func _cuesta_abajo(x: float, z: float) -> Vector3:
+	var d := 6.0
+	var g := Vector3(altura_terreno(x + d, z) - altura_terreno(x - d, z), 0.0,
+		altura_terreno(x, z + d) - altura_terreno(x, z - d))
+	if g.length() < 0.01:
+		return Vector3(randf_range(-1, 1), 0, randf_range(-1, 1)).normalized()
+	return -g.normalized()
+
+
+## La piedra que este aplastando al piche, si hay alguna.
+func roca_encima(pos: Vector3, radio_piche: float) -> Roca:
+	for r in rocas:
+		if is_instance_valid(r) and r.pisa(pos, radio_piche):
+			return r
+	return null
 
 
 ## Recoge lo que haya a tiro y devuelve cuantas piezas eran.

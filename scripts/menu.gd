@@ -8,7 +8,12 @@ const TIENDA := "res://escenas/Tienda.tscn"
 
 
 func _ready() -> void:
-	$Botones/Jugar.pressed.connect(func(): get_tree().change_scene_to_file(JUEGO))
+	$Botones/Jugar.pressed.connect(func(): _jugar())
+	# ponytail: atajo de desarrollo para entrar directo a un mapa sin jugarse
+	# los anteriores. Se esconde solo en el build exportado, asi que no hay que
+	# acordarse de sacarlo antes de publicar.
+	$Debug.visible = OS.is_debug_build()
+	$Debug.pressed.connect(func(): _jugar(1))
 	$Botones/Tienda.pressed.connect(func(): get_tree().change_scene_to_file(TIENDA))
 	$Botones/Ajustes.pressed.connect(func(): _pendiente("Los ajustes todavia no"))
 
@@ -22,6 +27,12 @@ func _ready() -> void:
 		boton.focus_entered.connect(func(): _realzar(boton, true))
 		boton.focus_exited.connect(func(): _realzar(boton, false))
 	$Botones/Jugar.grab_focus()   # con mando o teclado ya hay algo elegido
+
+
+## `mapa` es el indice en la lista `mapas` de Juego.tscn: 0 el muelle, 1 el cerro.
+func _jugar(mapa := 0) -> void:
+	Juego.mapa_inicial = mapa
+	get_tree().change_scene_to_file(JUEGO)
 
 
 func _realzar(boton: TextureButton, encima: bool) -> void:

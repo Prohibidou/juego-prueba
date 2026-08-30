@@ -1,0 +1,17 @@
+[gd_scene format=3 uid="uid://bf0xnntidem60"]
+
+[ext_resource type="Script" uid="uid://broca1gdscript" path="res://scripts/roca.gd" id="1_roca"]
+[ext_resource type="PackedScene" uid="uid://c867sae6nsiiq" path="res://resources-3d/PGJ_Roca1.glb" id="2_modelo"]
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_roca"]
+radius = 1.0
+
+[node name="Roca" type="RigidBody3D"]
+continuous_cd = true
+angular_damp = 0.15
+script = ExtResource("1_roca")
+
+[node name="Modelo" parent="." instance=ExtResource("2_modelo")]
+
+[node name="Forma" type="CollisionShape3D" parent="."]
+shape = SubResource("SphereShape3D_roca")

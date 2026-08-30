@@ -1,4 +1,5 @@
 extends Node3D
+class_name Juego
 ## Reglas y estado de la partida. No sabe como esta hecho el mapa:
 ## solo le pide el viento, la salida, la meta y si algo se ha chocado.
 
@@ -85,6 +86,11 @@ const VISTA_PANTALLA := 0.14    # subelo y el piche se ve mas grande
 const VISTA_MAX := 0.34         # metros de ancho como mucho
 # ----------------------------
 
+## Con que mapa arrancar. Lo pone el menu (su boton de debug) antes de cambiar
+## de escena; un cambio de escena no admite argumentos y esto son dos lineas,
+## que es menos que un autoload.
+static var mapa_inicial := 0
+
 ## Los mapas, EN ORDEN. Se arrastran las escenas en el Inspector: agregar un
 ## mapa no toca codigo. Cada una es un Node3D con mapa.gd, su glb como
 ## `Escenario` y un `Marker3D` `Salida`.
@@ -92,6 +98,7 @@ const VISTA_MAX := 0.34         # metros de ancho como mucho
 
 var indice := 0
 var llegado := false
+var _muriendo := false
 var quieto := true
 var listo := false
 var _t_lento := 0.0
@@ -144,9 +151,9 @@ func _ready() -> void:
 	impulso.preparar(piche, camara)
 	impulso.impulsado.connect(_on_impulsado)
 
-	# ponytail: con que mapa arrancar, para poder probar uno sin jugarse los
-	# anteriores:  godot --path . escenas/Juego.tscn -- --mapa 1
-	var pedido := 0
+	# ponytail: con que mapa arrancar. Lo decide el menu, y por linea de
+	# comandos se pisa:  godot --path . escenas/Juego.tscn -- --mapa 1
+	var pedido := mapa_inicial
 	var args := OS.get_cmdline_user_args()
 	var i := args.find("--mapa")
 	if i >= 0 and i + 1 < args.size():
@@ -429,6 +436,12 @@ func _process(dt: float) -> void:
 
 	mapa.mover_animales(dt, piche.global_position,
 		not quieto and piche.linear_velocity.length() > 10.0)
+	mapa.rodar_rocas(dt, piche.global_position)
+	# geometria, no contactos: una roca grande baja a mas de 20 m/s y a esa
+	# velocidad la colision la resuelve el CCD, que no reporta contacto
+	var roca := mapa.roca_encima(piche.global_position, Util.RADIO)
+	if roca:
+		_morir("Te aplasto una roca")
 
 	# Que el piche no se pierda de vista. Parada se dibuja a tamano real, que es
 	# cuando la camara esta encima y se vería un melon al lado del palo; en
@@ -442,12 +455,13 @@ func _process(dt: float) -> void:
 	var v := mapa.viento
 	# ponytail: sigue siendo texto de debug, no una interfaz. Lo que tiene que
 	# ver el jugador -a donde ir, con que tecla- esta en AUDITORIA.md.
-	hud.text = ("Mapa %d/%d | %d m a la camioneta
+	hud.text = ("Mapa %d/%d | %d m a la camioneta%s
 "
 		+ "Stamina %d | basura %d | Fuerza %d%% (%.0f m/s) | viento %.0f m/s
 "
 		+ "Timon %s") % [
 		indice + 1, mapas.size(), roundi(dist),
+		"  (se va!)" if mapa.meta_se_mueve() else "",
 		roundi(stamina), mapa.basura.size(),
 		roundi(impulso.fuerza * 100), impulso.velocidad(),
 		Vector2(v.x, v.z).length(),
@@ -690,7 +704,29 @@ func _aviso(texto: String, seg: float) -> void:
 		msg.text = ""
 
 
-## El piche se subio a la camioneta: se acabo el mapa.
+## Lo mato una roca: se vuelve a empezar EL MAPA, no la partida entera. Perder
+## el cerro no tiene por que costar el muelle.
+##
+## ponytail: no hay vidas ni contador de intentos. Si hiciera falta que morir
+## duela mas que perder el tiempo, el contador va aca.
+func _morir(motivo: String) -> void:
+	if _muriendo or not listo:
+		return
+	_muriendo = true
+	listo = false
+	piche.freeze = true
+	estela.emitting = false
+	Util.reventar(mapa, piche.global_position, Color(0.6, 0.5, 0.4), 24)
+	msg.text = motivo
+	# en tiempo real, como los demas avisos: si muere en camara lenta el cartel
+	# se estiraria con el time_scale
+	await get_tree().create_timer(1.6, true, false, true).timeout
+	msg.text = ""
+	await _cargar_mapa(indice)
+	_muriendo = false
+
+
+## El piche alcanzo la camioneta: se acabo el mapa.
 ##
 ## ponytail: al pasar del ultimo vuelve al primero. Falta la pantalla de
 ## llegada y el guardado del progreso (AUDITORIA.md).
@@ -698,7 +734,7 @@ func _llegar() -> void:
 	llegado = true
 	piche.freeze = true
 	estela.emitting = false
-	msg.text = "Llegaste a la camioneta"
+	msg.text = "La alcanzaste!" if mapa.meta_se_mueve() else "Llegaste a la camioneta"
 	# en tiempo real: si se llega con la camara lenta puesta, el cartel se
 	# estiraba igual que los avisos
 	await get_tree().create_timer(1.8, true, false, true).timeout
@@ -794,22 +830,49 @@ func _check_mapa() -> void:
 	if mapa.tiene_meta():
 		# la siembra va por el camino salida-meta: sin meta no hay camino
 		assert(mapa.basura.size() > 0, "%s: se quedo sin basura que recoger" % mapa.name)
-		# la meta es SUBIRSE a la camioneta: encima y posado cuenta; al lado,
-		# debajo, o pasandole por arriba a toda velocidad, no
-		# se prueba justo en el borde de la condicion de altura, no en el techo:
-		# el sitio donde uno se sube de verdad es el piso de la caja, y ahi es
-		# donde fallaba -el umbral estaba 18 cm por encima de ese piso-
 		var caja: AABB = mapa.caja_meta()
-		var m := Vector3(caja.get_center().x,
-			caja.position.y + caja.size.y * mapa.ALTURA_CAJA, caja.get_center().z)
-		assert(mapa.llego(m + Vector3.UP * 0.05), "posado en la caja no cuenta como llegar")
-		assert(not mapa.llego(m - Vector3.UP * 0.05), "por debajo del piso cuenta como llegar")
-		assert(not mapa.llego(m + Vector3.UP * 0.3, Vector3(20, 0, 0)),
-			"pasarle por arriba volando cuenta como llegar")
-		assert(not mapa.llego(m + Vector3(8, 0.3, 0)), "al lado cuenta como llegar")
-		assert(not mapa.llego(m - Vector3(0, 2.5, 0)), "por debajo cuenta como llegar")
+		if mapa.meta_se_mueve():
+			# se le corre: alcanza con arrimarse, y de lejos no vale
+			assert(mapa.llego(caja.get_center()), "pegado a la camioneta no cuenta")
+			assert(not mapa.llego(caja.get_center() + Vector3(50, 0, 0)),
+				"a 50 m de la camioneta ya cuenta como alcanzada")
+			# y no puede arrancar encima del piche, o el mapa se gana solo
+			var d := caja.get_center().distance_to(piche.global_position)
+			print("camioneta: arranca a %.0f m del piche" % d)
+			assert(not mapa.llego(piche.global_position),
+				"%s: la camioneta arranca encima del piche" % mapa.name)
+			# y su recorrido tiene que ALEJARSE. Si le pasa por encima a la
+			# salida, la camioneta va a buscar al piche y el mapa se gana
+			# quedandose quieto: paso de verdad al trazar la primera espiral.
+			var roce := mapa.camioneta().roza_en_la_salida(piche.global_position)
+			print("camioneta: en sus primeros 90 m pasa a %.0f m de la salida" % roce)
+			assert(roce > mapa.camioneta().alcance + 6.0,
+				"%s: la ruta le pasa por encima a la salida" % mapa.name)
+		else:
+			# la meta es SUBIRSE a la camioneta: encima y posado cuenta; al
+			# lado, debajo, o pasandole por arriba a toda velocidad, no
+			# se prueba justo en el borde de la condicion de altura, no en el
+			# techo: el sitio donde uno se sube de verdad es el piso de la
+			# caja, y ahi es donde fallaba -el umbral estaba 18 cm arriba-
+			var m := Vector3(caja.get_center().x,
+				caja.position.y + caja.size.y * mapa.ALTURA_CAJA, caja.get_center().z)
+			assert(mapa.llego(m + Vector3.UP * 0.05), "posado en la caja no cuenta como llegar")
+			assert(not mapa.llego(m - Vector3.UP * 0.05), "por debajo del piso cuenta como llegar")
+			assert(not mapa.llego(m + Vector3.UP * 0.3, Vector3(20, 0, 0)),
+				"pasarle por arriba volando cuenta como llegar")
+			assert(not mapa.llego(m + Vector3(8, 0.3, 0)), "al lado cuenta como llegar")
+			assert(not mapa.llego(m - Vector3(0, 2.5, 0)), "por debajo cuenta como llegar")
 	if mapa.tiene_jaula():
 		_check_jaula()
+	else:
+		# Sin jaula al piche lo apoya el rayo al suelo. Si queda flotando o
+		# enterrado, la salida esta sobre un tejado, un hueco o una cara que
+		# el rayo no ve, y el mapa arranca roto.
+		var suelo := mapa.altura_terreno(piche.global_position.x, piche.global_position.z)
+		var sobre := piche.global_position.y - suelo
+		print("salida: el piche queda %.2f m sobre el suelo (y=%.2f)"
+			% [sobre, piche.global_position.y])
+		assert(absf(sobre - Util.RADIO) < 0.5, "%s: el piche no arranca apoyado" % mapa.name)
 	print("mapa %d/%d %s: salida %s | meta %s | %d m%s"
 		% [indice + 1, mapas.size(), mapa.name, str(t.round()), str(b.round()),
 		   roundi(Vector2(t.x - b.x, t.z - b.z).length()),
