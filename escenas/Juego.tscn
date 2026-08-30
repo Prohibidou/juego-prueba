@@ -7,6 +7,7 @@
 [ext_resource type="PackedScene" uid="uid://b2cerromapa2xy" path="res://escenas/mapas/Cerro.tscn" id="5_cerro"]
 [ext_resource type="PackedScene" uid="uid://nv4bpr3ue734" path="res://escenas/Piche.tscn" id="6_jv425"]
 [ext_resource type="PackedScene" path="res://escenas/Pausa.tscn" id="7_pausa"]
+[ext_resource type="PackedScene" uid="uid://c3nqhx8vsgm1r" path="res://escenas/Sonido.tscn" id="8_sonido"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_l3i6u"]
 sky_top_color = Color(0.32, 0.55, 0.9, 1)
@@ -97,6 +98,22 @@ offset_right = 2.0
 offset_bottom = -72.0
 show_percentage = false
 
+[node name="Ayuda" type="Label" parent="UI" unique_id=1077121290]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -2.0
+offset_top = -116.0
+offset_right = 2.0
+offset_bottom = -96.0
+grow_horizontal = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.85)
+theme_override_constants/outline_size = 7
+theme_override_font_sizes/font_size = 24
+horizontal_alignment = 1
+
 [node name="Pegar" type="Button" parent="UI" unique_id=1771028777]
 custom_minimum_size = Vector2(190, 190)
 anchors_preset = 3
@@ -143,3 +160,5 @@ freeze = true
 continuous_cd = true
 contact_monitor = true
 max_contacts_reported = 4
+
+[node name="Sonido" parent="." instance=ExtResource("8_sonido")]
