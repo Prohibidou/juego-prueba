@@ -22,6 +22,10 @@ const FOTO_AEREA := false
 # molde, se duplican y se siembran por el pasillo del hoyo.
 const BASURA := "res://modelos/trash_and_debris.glb"
 const BASURAS := 16            # piezas por hoyo
+# Un cuarto de los moldes del escaparate son laminas de espesor casi cero
+# (papeles, calcos, latas pisadas): a ras del piso hacen z-fighting con el
+# suelo (el flickering del playtest). Solo se siembran piezas con volumen.
+const MOLDE_MIN := 0.05        # metros del lado mas fino que se acepta
 
 # medidas reales de golf
 # --- la meta: subirse a la camioneta ---
@@ -61,6 +65,10 @@ const MARGEN_TECHO := 10.0
 # darla por caida al mar o a la bodega por uno de los huecos del casco.
 const HUNDIDO := 8.0
 const INTENTOS_SIEMBRA := 6    # tiros de dado por pieza antes de rendirse
+# Por debajo de esto ya es el mar (su superficie esta en 164.74) o la bodega
+# baja del barco: no hay vuelta caminando. Lo caminable mas bajo son las
+# plataformas del mar, con el tope en 165.2.
+const NIVEL_PERDIDO := 165.0
 
 # Zonas. Sin mapa de control pintado hay que deducirlas de la geometria del
 # hoyo: cerca de la bandera es green, en el pasillo tee-bandera es calle, y el
@@ -76,6 +84,7 @@ const HOYOS := [
 
 var indice := 0
 var excluir: Array[RID] = []   # la bola, para que no la pisen los rayos
+var _rids_mar: Array[RID] = []   # los cuerpos del agua: ahi no se siembra
 
 var _curso: Node3D
 var _copa: Node3D
@@ -135,6 +144,10 @@ func preparar() -> void:
 		# el piso (Jaula.tscn): sobre la cubierta real, irregular, la bola se
 		# colaba por la rendija entre tapa y suelo y "la puerta no paraba".
 		m.create_trimesh_collision()
+		if m.name == "Mar":
+			for cuerpo in m.get_children():
+				if cuerpo is StaticBody3D:
+					_rids_mar.append((cuerpo as StaticBody3D).get_rid())
 		# Un trimesh choca solo por el lado de las normales (backface_collision
 		# arranca en false, y desde Godot 4.5 Jolt lo respeta de verdad). Medio
 		# mapa esta modelado a una cara -galpones, silos, el casco-, asi que la
@@ -158,11 +171,18 @@ func preparar() -> void:
 					copia.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 					m.set_surface_override_material(i, copia)
 		n += 1
+	if _rids_mar.is_empty():
+		push_warning("no se encontro la malla 'Mar': el filtro de siembra sobre el agua queda apagado")
 	var escaparate := (load(BASURA) as PackedScene).instantiate()
 	escaparate.visible = false     # se queda de molde, no se ve
 	add_child(escaparate)
 	for m in escaparate.find_children("*", "MeshInstance3D", true, false):
-		_moldes.append(m as MeshInstance3D)
+		var mi := m as MeshInstance3D
+		var s: Vector3 = (Transform3D(mi.global_transform.basis, Vector3.ZERO)
+			* mi.mesh.get_aabb()).size.abs()
+		if minf(s.x, minf(s.y, s.z)) < MOLDE_MIN:
+			continue
+		_moldes.append(mi)
 
 	# la camioneta del mapa es la meta: se guarda su caja YA colocada en el
 	# mundo, que el glb viene recentrado y sus coordenadas crudas no valen
@@ -202,13 +222,18 @@ func labio_copa() -> float:
 func ir_a(i: int) -> void:
 	indice = i
 	# Tee y Bandera son marcadores de Campo.tscn: se arrastran en el editor.
-	# De ellos se usa solo el plano; la altura la pone el rayo al suelo. El tee
+	# De ellos se usa solo el plano; la altura la pone el rayo. El tee
 	# NO va donde el glb pone su marcador "jaula" -ese cae sobre un hueco del
 	# casco y la jaula quedaba dentro del barco-, sino en una meseta de la
 	# cubierta con sitio detras para la camara.
 	var t: Vector3 = $Tee.position
 	var b: Vector3 = $Bandera.position
-	_tee = Vector3(t.x, altura_suelo(t.x, t.z), t.z)
+	# altura_terreno (primera colision), NO altura_suelo: la bola arranca sobre
+	# la meseta del barco (y=180.3), que es lo primero que pega el rayo y donde
+	# la pone _poner_bola. El pelado de altura_suelo cruza la cubierta por los
+	# huecos del casco y devolvia el MAR (164.74): el tee quedaba 15 m abajo del
+	# arranque real y la red de HUNDIDO de la siembra no filtraba nada.
+	_tee = Vector3(t.x, altura_terreno(t.x, t.z), t.z)
 	if _meta.size != Vector3.ZERO:
 		# la meta es la camioneta: la bandera apunta a su caja, que es a donde
 		# hay que llegar, y no se planta ninguna copa sobre la cubierta
@@ -233,13 +258,12 @@ func altura_terreno(x: float, z: float, techo := INF) -> float:
 	return _bandera.y if is_inf(h) else h
 
 
-## Rayo hacia abajo, en crudo. Devuelve INF si no encuentra NADA, que no es lo
-## mismo que encontrar suelo a la altura cero: altura_suelo necesita saber la
-## diferencia para no seguir pelando capas cuando ya no queda nada debajo.
-func _rayo(x: float, z: float, desde: float) -> float:
+## Rayo hacia abajo, en crudo, resultado entero (posicion + rid del cuerpo).
+## Diccionario vacio si no pega en nada.
+func _rayo_crudo(x: float, z: float, desde: float) -> Dictionary:
 	var esp := get_world_3d().direct_space_state
 	if esp == null:
-		return INF
+		return {}
 	var q := PhysicsRayQueryParameters3D.create(Vector3(x, desde, z), Vector3(x, SUELO, z))
 	q.exclude = excluir
 	# Los rayos de altura ignoran las caras traseras A PROPOSITO. Al poner las
@@ -250,7 +274,14 @@ func _rayo(x: float, z: float, desde: float) -> float:
 	# Con esto los rayos ven lo mismo de siempre y la doble cara queda solo
 	# para los cuerpos, que es donde hace falta.
 	q.hit_back_faces = false
-	var golpe := esp.intersect_ray(q)
+	return esp.intersect_ray(q)
+
+
+## Rayo hacia abajo. Devuelve INF si no encuentra NADA, que no es lo mismo que
+## encontrar suelo a la altura cero: altura_suelo necesita saber la diferencia
+## para no seguir pelando capas cuando ya no queda nada debajo.
+func _rayo(x: float, z: float, desde: float) -> float:
+	var golpe := _rayo_crudo(x, z, desde)
 	return golpe["position"].y if golpe else INF
 
 
@@ -264,12 +295,32 @@ func _altura_cruda(x: float, z: float, techo := INF) -> float:
 	return NAN if is_inf(h) else h
 
 
-## Altura para SEMBRAR: ademas de exigir que el rayo pegue en algo, tira las
-## que se cuelan por los huecos del casco y acaban en el mar o en la bodega,
-## muy por debajo del pasillo tee-bandera. Devuelve NAN si el sitio no vale.
+## Altura para SEMBRAR: ademas de exigir que el rayo pegue en algo, tira los
+## sitios donde una pieza no se puede recoger andando: el mar (que colisiona y
+## el rayo lo ve como piso), lo que este por debajo de todo lo caminable, lo
+## que se hundio mucho respecto del pasillo tee-bandera, y lo que quedo BAJO
+## TECHO -un rayo que se colo por un hueco del casco pega en la bodega, y esa
+## botella se ve por el agujero pero no hay como agarrarla-. Devuelve NAN si
+## el sitio no vale.
 func _altura_sembrable(x: float, z: float) -> float:
-	var y := _altura_cruda(x, z)
-	if is_nan(y) or y < minf(_tee.y, _bandera.y) - HUNDIDO:
+	var g := _rayo_crudo(x, z, _techo)
+	if g.is_empty():
+		return NAN
+	var y: float = g["position"].y
+	if y < minf(_tee.y, _bandera.y) - HUNDIDO or y < NIVEL_PERDIDO + 0.1:
+		return NAN
+	if _rids_mar.has(g["rid"]):
+		return NAN
+	# cielo abierto: el rayo va de +0.4 (salta el volumen de la propia pieza)
+	# a +2.5; si en ese tramo hay geometria, esto es la bodega (o un
+	# entrepiso): se ve, no se alcanza. hit_back_faces en true porque la cara
+	# de la cubierta mira hacia arriba y desde abajo es trasera.
+	var esp := get_world_3d().direct_space_state
+	var q := PhysicsRayQueryParameters3D.create(
+		Vector3(x, y + 0.4, z), Vector3(x, y + 2.5, z))
+	q.exclude = excluir
+	q.hit_back_faces = true
+	if esp.intersect_ray(q):
 		return NAN
 	return y
 
@@ -311,6 +362,13 @@ func embocada(pos: Vector3, vel := Vector3.ZERO) -> bool:
 	return absf(pos.x - c.x) < _meta.size.x * MARGEN_META \
 		and absf(pos.z - c.z) < _meta.size.z * MARGEN_META \
 		and pos.y > _meta.position.y + _meta.size.y * ALTURA_CAJA
+
+
+## Ya no hay vuelta: el agua y la bodega quedan por debajo de todo lo caminable.
+## Quien la use decide que hacer (reponer, penalizar); el campo solo sabe donde
+## termina lo jugable.
+func perdida(pos: Vector3) -> bool:
+	return pos.y < NIVEL_PERDIDO
 
 
 ## ponytail: zonas por geometria, no por textura. La foto no dice donde acaba la
@@ -439,9 +497,10 @@ func _poblar_fauna() -> void:
 		if is_nan(y):
 			continue
 		var nodo := (load(ANIMAL) as PackedScene).instantiate()
-		# altura_suelo pela la copa: _altura_sembrable ya valido que p es firme,
-		# pero el rayo bajo un arbol para en la copa, no en el pasto.
-		nodo.position = Vector3(p.x, altura_suelo(p.x, p.y), p.y)
+		# se coloca en la misma y que valido _altura_sembrable: pelar de nuevo con
+		# altura_suelo cruza la cubierta por los huecos del casco y devuelve la
+		# bodega o el mar, que es justo lo que _altura_sembrable ya descarto.
+		nodo.position = Vector3(p.x, y, p.y)
 		add_child(nodo)
 		animales.append({"nodo": nodo, "dir": randf() * TAU, "t": randf() * 3.0,
 			"vivo": true, "color": COLOR_ANIMAL})
@@ -479,10 +538,13 @@ func _poblar_basura() -> void:
 		malla.position = -caja.get_center()   # el molde viene donde lo dejo el escaparate
 		var pieza := Node3D.new()
 		pieza.add_child(malla)
-		pieza.position = Vector3(p.x, altura_suelo(p.x, p.y) + caja.size.y * 0.5, p.y)
+		# la misma y que valido _altura_sembrable: pelar de nuevo con altura_suelo
+		# cruza la cubierta por los huecos del casco y termina en la bodega o el mar.
+		pieza.position = Vector3(p.x, y + caja.size.y * 0.5, p.y)
 		pieza.rotation.y = randf() * TAU
 		add_child(pieza)
 		basura.append(pieza)
+	print("basura sembrada: %d de %d" % [basura.size(), BASURAS])
 
 
 ## Recoge lo que haya a tiro y devuelve cuantas piezas eran.

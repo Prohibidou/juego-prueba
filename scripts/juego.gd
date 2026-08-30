@@ -105,6 +105,7 @@ var _v_pendiente := Vector3.ZERO
 var _giro := 0.0
 var _en_aire := false
 var _desde := Vector3.ZERO
+var _firme := Vector3.ZERO    # ultimo sitio donde estuvo parada en suelo jugable
 var _ultimo := 0.0        # distancia del ultimo golpe, para el aviso
 var _diam_bola := 1.0     # tamano del modelo tal cual viene, en sus unidades
 var _caja_bola := AABB()
@@ -136,6 +137,7 @@ var _marcas: Array = []
 @onready var msg: Label = $UI/Msg
 @onready var barra: ProgressBar = $UI/Barra
 @onready var barra_stam: ProgressBar = $UI/BarraStam
+@onready var ayuda: Label = $UI/Ayuda
 
 
 func _ready() -> void:
@@ -260,7 +262,13 @@ func _escalar_vista(dist: float, dt := 0.0) -> void:
 ## dentro. Los cuerpos de la jaula se sacan de los rayos de altura: si no, el
 ## rayo del tee daria en su techo y todo se colocaria dos metros mas arriba.
 func _montar_jaula() -> void:
+	# la jaula vieja sigue viva hasta el fin del frame (queue_free): sus
+	# cuerpos tienen que seguir excluidos de los rayos de altura o cualquier
+	# _poner_bola de ESTE frame la planta arriba de su techo. RIDs de cuerpos
+	# ya muertos en la lista no molestan.
+	var viejos: Array[RID] = []
 	if is_instance_valid(_jaula):
+		viejos = _jaula.cuerpos()
 		_jaula.queue_free()   # la bisagra y la puerta cuelgan de ella
 	Engine.time_scale = 1.0     # por si se cambia de hoyo en pleno portazo
 	golpe.fin_cine()
@@ -278,6 +286,7 @@ func _montar_jaula() -> void:
 	# techo de la jaula y la bola se coloca dos metros mas arriba
 	campo.excluir = [bola.get_rid()]
 	campo.excluir.append_array(_jaula.cuerpos())
+	campo.excluir.append_array(viejos)
 
 
 ## Los nodos estan en Juego.tscn; aca solo queda lo que un .tscn no guarda:
@@ -323,6 +332,7 @@ func _poner_bola(donde: Vector3) -> void:
 	_portazo = 1.0
 	_mira_rueda = golpe.mira  # que no arranque girando por la diferencia con la mira anterior
 	_aplicar_damp()
+	_firme = bola.global_position
 
 
 func _aplicar_damp() -> void:
@@ -370,6 +380,11 @@ func _process(dt: float) -> void:
 	golpe.puede_saltar = stamina >= STAMINA_MIN
 	golpe.enjaulado = _en_la_jaula()
 
+	# el playtest se quedo encerrado sin saber que tecla era: el impulso es G y
+	# no se dice en ningun lado. Solo mientras la puerta siga puesta.
+	ayuda.text = "Mantené apretado G y soltá: el impulso tira la puerta" \
+		if _enjaulado() and quieto and not embocada else ""
+
 	var cogidas := campo.recoger(bola.global_position, R_RECOGE)
 	if cogidas > 0:
 		stamina = minf(STAMINA_MAX, stamina + cogidas * STAMINA_BASURA)
@@ -403,7 +418,7 @@ func _process(dt: float) -> void:
 	var v := campo.viento()
 	hud.text = ("Hoyo %d/%d | Par %d | Golpes %d | %d puntos | %d m al hoyo\n"
 		+ "Stamina %d | basura %d | Fuerza %d%% (%.0f m/s) +-%.1f deg | %s | viento %.0f m/s\n"
-		+ "Timon %s") % [
+		+ "Timon %s | R = drop +1") % [
 		indice + 1, Campo.HOYOS.size(), campo.par(), golpes, total, roundi(dist),
 		roundi(stamina), campo.basura.size(),
 		roundi(golpe.fuerza * 100), golpe.velocidad(),
@@ -427,6 +442,22 @@ func _physics_process(dt: float) -> void:
 		return
 
 	if quieto:
+		# la red de rescate: entre las maderas del muelle o por un hueco del
+		# casco se cae al MAR, que colisiona -se queda uno caminando sobre el
+		# agua sin vuelta-. Andando no hay pena: caerse por una rendija es
+		# culpa del mapa, no del jugador.
+		if campo.perdida(bola.global_position):
+			_aviso("¡Al agua!", 1.2)
+			_poner_bola(_firme)
+			return
+		# _firme solo se toma APOYADO en suelo jugable: durante la caida por un
+		# hueco la bola sigue "quieta" (andando) y sin este resguardo _firme
+		# quedaba en el aire sobre el propio hueco -reponer ahi la devolvia al
+		# mar y era un rebote infinito de rescates
+		if not _saltando and (bola.freeze or absf(bola.linear_velocity.y) < 0.1):
+			var alt := campo.altura_terreno(bola.global_position.x, bola.global_position.z)
+			if bola.global_position.y - Util.RADIO < alt + 0.05 and alt > Campo.NIVEL_PERDIDO:
+				_firme = bola.global_position
 		_conducir(dt)
 		if _saltando:
 			_aterrizar()
@@ -438,6 +469,15 @@ func _physics_process(dt: float) -> void:
 	var pos := bola.global_position
 	var vel := bola.linear_velocity
 	if pos.y < -60.0:
+		_poner_bola(_desde)
+		return
+
+	# un golpe que termina en el agua es un drop clasico: pena y a repetir
+	# desde donde se pego. Sin esto la bola aterrizaba EN el mar (colisiona)
+	# y se seguia jugando desde el agua.
+	if campo.perdida(pos) and not _empujando:
+		golpes += PENA_DROP
+		_aviso("Al agua  +%d" % PENA_DROP, 1.4)
 		_poner_bola(_desde)
 		return
 
@@ -629,8 +669,8 @@ func _en_la_jaula() -> bool:
 
 
 func _marca(pos: Vector3, v: float) -> void:
-	var r := clampf(v * 0.005, 0.06, 0.35)
-	var m := Util.disco(r, 0.02, Color(0.30, 0.24, 0.14))
+	var r := clampf(v * 0.005, 0.05, 0.2)
+	var m := Util.disco(r, 0.02, Color(0.22, 0.19, 0.13))
 	m.position = Vector3(pos.x, campo.altura_terreno(pos.x, pos.z) + 0.02, pos.z)
 	campo.add_child(m)
 	_marcas.append(m)
@@ -696,6 +736,55 @@ func _probar_jaula() -> void:
 	var b := await _empujar(a_barrotes)
 	print("jaula: contra los barrotes, la bola queda en z=%.2f" % b.z)
 	assert(absf(b.z) < 1.0, "la bola se cuela entre los barrotes")
+
+	# 2b. ni por las esquinas: los muros de 2 m dejaban un tunel diagonal de
+	# 30x30 cm en cada una (el piche mide 4 cm y salia caminando)
+	for esquina in [Vector3(1, 0, 1), Vector3(1, 0, -1), Vector3(-1, 0, 1), Vector3(-1, 0, -1)]:
+		_poner_bola(campo.pos_tee())
+		var e := await _empujar((_jaula.global_basis * esquina).normalized())
+		print("jaula: contra la esquina %s queda en (%.2f, %.2f)" % [str(esquina), e.x, e.z])
+		assert(absf(e.x) < 1.05 and absf(e.z) < 1.05, "la bola se escapa por una esquina")
+		# cota INFERIOR: si un rescate enmascarado repusiera la bola en el tee,
+		# la lectura sana es 0.95-0.98 (apretada contra el muro); un
+		# teletransporte al tee daria ~0 y pasaria la cota superior sin apretar nada
+		assert(maxf(absf(e.x), absf(e.z)) > 0.5,
+			"la prueba de esquina no llego a apretar contra el muro")
+
+	# 3b. un impulso a full contra un muro ciego tampoco lo tunelea: el
+	# playtest reportaba al piche "traspasando los barrotes", y a 26 m/s eso
+	# es cosa del CCD, no de andar
+	_poner_bola(campo.pos_tee())
+	golpe.mira = atan2(a_barrotes.x, a_barrotes.z)
+	golpe.activo = true
+	golpe.cargar()
+	golpe.fuerza = 1.0
+	golpe.soltar()
+	# la dispersion ya se sorteo dentro de soltar(), en la linea de arriba: esto
+	# solo deja fijada la mira que queda puesta para lo que siga
+	golpe.mira = atan2(a_puerta.x, a_puerta.z)
+	# el impulso recien se aplica en el SIGUIENTE tick (ver _physics_process):
+	# sin estos dos frames de margen, el primer chequeo de "quieto" de abajo
+	# todavia lee el valor de ANTES del golpe y corta el loop de entrada
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	for i in 900:
+		if quieto:
+			break
+		await get_tree().physics_frame
+	var tunel := _jaula.global_transform.affine_inverse() * bola.global_position
+	print("jaula: impulso a full contra el fondo, queda en z=%.2f" % tunel.z)
+	assert(absf(tunel.z) < 1.3, "el impulso a full tunelea el muro")
+	# el resguardo anti-softlock: cualquier impulso que se asienta adentro
+	# tira la puerta y abre el hueco, pegue donde pegue -si no, el jugador
+	# quedaria encerrado gastando golpes-. Se verifica eso, no que la puerta
+	# aguante: aguantar no es una promesa del diseno.
+	assert(not _jaula.cerrada(), "el impulso adentro no abrio el hueco anti-softlock")
+	stamina = STAMINA_MAX
+	# el resguardo deja esta jaula rota siempre: se remonta una nueva y entera
+	# para que el punto 4 arranque en las condiciones que necesita
+	_poner_bola(campo.pos_tee())
+	_montar_jaula()
+	golpe.reset(campo.pos_tee(), campo.pos_bandera())
 
 	# 3. brincar ni tira la puerta ni despeja el techo
 	_poner_bola(campo.pos_tee())
@@ -839,6 +928,33 @@ func _self_check() -> void:
 	stamina = stamina_salto
 	print("modelo %s | caja %s | diametro %.2f u"
 		% [vista.scene_file_path.get_file(), str(_caja_bola), _diam_bola])
+	# el tee y el arranque real de la bola son la misma altura: si difieren,
+	# altura_suelo volvio a pelar la cubierta hasta el mar (o el tee quedo
+	# colgado) y la red de HUNDIDO de la siembra no filtra nada
+	assert(absf(campo.pos_tee().y - (bola.global_position.y - Util.RADIO)) < 0.5,
+		"el tee no esta a la altura donde arranca la bola")
+	# la basura se siembra donde se puede ir a buscar: sobre el nivel del agua
+	# y a cielo abierto (no en la bodega, vista por un hueco pero inalcanzable)
+	for pieza in campo.basura:
+		assert(pieza.global_position.y > Campo.NIVEL_PERDIDO,
+			"hay basura sembrada en el mar o la bodega")
+	# y ningun molde plano: eran el flickering del playtest
+	for molde in campo._moldes:
+		var s: Vector3 = (Transform3D(molde.global_transform.basis, Vector3.ZERO)
+			* molde.mesh.get_aabb()).size.abs()
+		assert(minf(s.x, minf(s.y, s.z)) >= Campo.MOLDE_MIN,
+			"quedo un molde plano en el mazo de basura")
+	# el rectangulo del muelle: por el pasillo central ya no se cae al mar
+	for punto in [Vector2(976, 712), Vector2(976, 716), Vector2(976, 720),
+			Vector2(972, 724), Vector2(972, 728), Vector2(972, 732)]:
+		var h := campo.altura_terreno(punto.x, punto.y, 170.0)
+		assert(h > 166.3, "el muelle sigue teniendo huecos en (%s): h=%.2f" % [str(punto), h])
+	# el texto de la G: enjaulado se ve, y es texto de pantalla (con tilde).
+	# El texto lo pone _process: hay que dejar pasar un frame para que corra
+	# (listo ya esta en true), si no el assert lee el Label recien nacido.
+	await get_tree().process_frame
+	await get_tree().process_frame
+	assert(ayuda.text != "", "no hay texto de ayuda dentro de la jaula")
 	print("self-check OK | tee %s | bandera %s | %d m | par %d"
 		% [str(t.round()), str(b.round()),
 		   roundi(Vector2(t.x - b.x, t.z - b.z).length()), campo.par()])
@@ -855,12 +971,17 @@ func _self_check() -> void:
 		# primer impulso choca, la tira y rebota dentro de la jaula.
 		await get_tree().physics_frame
 		await get_tree().physics_frame
+		# la distancia se mide en el MAXIMO del vuelo, no al descansar: si la
+		# dispersion manda el impulso al agua, el drop lo repone en el tee y
+		# la posicion final vuelve a ser el centro de la jaula
+		var d := 0.0
 		for i in 900:
+			d = maxf(d, bola.global_position.distance_to(_jaula.global_position))
 			if quieto:
 				break
 			await get_tree().physics_frame
-		var d := bola.global_position.distance_to(_jaula.global_position)
-		print("primer impulso: puerta abajo y la bola sale a %.2f m de la jaula" % d)
+		d = maxf(d, bola.global_position.distance_to(_jaula.global_position))
+		print("primer impulso: puerta abajo y la bola llega a %.2f m de la jaula" % d)
 		assert(not _jaula.puerta_entera(), "el primer impulso no tiro la puerta")
 		assert(not _jaula.cerrada(), "el hueco no quedo abierto")
 		# que SALIO de la jaula, no cuantos metros: la media diagonal de la jaula
@@ -892,3 +1013,13 @@ func _self_check() -> void:
 		print("casco: disparada a 26 m/s, la bola pasa %.2f m del plano del casco" % tras)
 		assert(tras < 1.0, "la bola atraviesa el casco del barco")
 		_poner_bola(campo.pos_tee())
+		# la red de rescate: parada en el agua, vuelve sola al ultimo suelo firme
+		var firme_antes := _firme
+		bola.global_position = Vector3(900.0, Campo.NIVEL_PERDIDO - 0.1, 750.0)
+		bola.freeze = false
+		quieto = true
+		for i in 10:
+			await get_tree().physics_frame
+		print("rescate: desde el agua vuelve a %s" % str(bola.global_position.round()))
+		assert(bola.global_position.distance_to(firme_antes) < 2.0,
+			"la bola no vuelve del agua")

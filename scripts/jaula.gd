@@ -16,10 +16,12 @@ class_name Jaula
 ## entre ellos y el piche mide 4 cm: con la malla, la jaula era un colador.
 ## Solo se sale por la puerta, este entera o ya tirada.
 ##
-## Muros Y TAPA bajan medio metro por debajo del origen: la jaula apoya donde
-## pega el rayo de altura, pero el suelo de verdad (la cubierta del barco) es
-## irregular y queda mas bajo alrededor. Cuando la tapa arrancaba en y=0, esa
-## rendija era una salida: el piche pasaba por debajo andando.
+## Los MUROS bajan 1.65 por debajo del origen y la TAPA medio metro: la jaula
+## apoya donde pega el rayo de altura, pero el suelo de verdad (la cubierta
+## del barco) es irregular y queda mas bajo alrededor. Con muros a medio metro
+## la esquina (+1,-1) dejaba un hueco por debajo y el piche se escurria; con
+## la tapa arrancando en y=0, esa rendija era una salida: el piche pasaba por
+## debajo andando.
 
 ## El vigilado atraveso la puerta. Llega la direccion de salida, ya aplanada.
 signal reventada(fuera: Vector3)
