@@ -5,18 +5,22 @@ llevarlo hasta un punto. NO es un juego de golf. Escenario real por
 fotogrametria. Codigo y comentarios en castellano, sin tildes ni enies en el
 codigo; los textos de pantalla si llevan.
 
-**Arrastra un pasado de golf y hay que ir sacandolo.** El proyecto empezo siendo
-golf, asi que quedan par, tarjeta, "Birdie", penalizaciones por drop, y sobre
-todo una copa de 5.4 cm de radio como meta -`campo.embocada()`-, que para
-"llegar a un punto" es injugable. Lo que SI sirve tal cual: el impulso con
-barra, la dispersion, el timon en el aire, el salto, la conduccion, la stamina,
-la basura, la jaula y la intro. Lo que se llama "hoyo" en el
-codigo es un nivel; lo que se llama "golpe", un impulso.
+**El pasado de golf ya se saco del codigo** (agosto 2026): no quedan par,
+tarjeta, "Birdie", penalizaciones, copa, bandera, ni zonas calle/rough/green.
+La meta es `mapa.llego()`: subirse a la caja de la camioneta. Los nombres son
+los del juego real -`salida`, `meta`, `nivel`, `impulso`, `piche`-, no los de
+golf. Lo que se conservo porque funciona: el impulso con barra, la dispersion,
+el timon en el aire, el salto, la conduccion, la stamina, la basura, la jaula y
+la intro.
+
+**Lo que falta para que sea un juego esta en `AUDITORIA.md`**, en orden: el
+segundo mapa (hoy hay uno solo y al llegar se reinicia), pantalla de llegada,
+guardado, pausa, controles en pantalla, audio y la animacion del piche.
 
 ## Como verificar
 
 Antes de decir que algo funciona, correr esto. Levanta el juego entero y ejecuta
-`_self_check()` de `juego.gd`, que son ~15 asserts sobre el campo, la jaula, el
+`_self_check()` de `juego.gd`, que son ~15 asserts sobre el mapa, la jaula, el
 piche y la intro:
 
 ```
@@ -27,8 +31,24 @@ piche y la intro:
 La escena principal del proyecto es `Menu.tscn`, que no carga nada: sin nombrar
 `Juego.tscn` la corrida se queda en la portada y no ejecuta un solo assert.
 
-Los asserts imprimen numeros (`la bola queda en x=0.81`), no solo pasan o fallan.
+Los asserts imprimen numeros (`el piche queda en x=0.81`), no solo pasan o fallan.
 Si tocas algo que ya tiene assert, el numero tiene que seguir teniendo sentido.
+
+Para probar un mapa sin jugarse los anteriores, `-- --mapa N` (0 es el primero):
+
+```
+"/c/Users/.../Godot_v4.6.3-stable_win64.exe"   --headless --path . res://escenas/Juego.tscn --quit-after 4000 -- --mapa 1
+```
+
+`_self_check()` es lo que NO depende del mapa. Lo de cada mapa esta en
+`_check_mapa()`, que corre en CADA carga; las pruebas de la jaula fisica y del
+casco del barco son del muelle y estan detras de `mapa.tiene_jaula()`.
+
+**Un mapa nuevo es un glb con dos mallas por nombre: `CAMIONETA` (la meta) y,
+si arranca encerrado, `jaula` (la salida, con su cara +X hacia donde tiene que
+salir).** Sin jaula el piche arranca de pie en el `Marker3D` `Salida` y no hay
+cinematica. Para ver que trae un glb antes de armarle la escena:
+`--script res://herramientas/ver_glb.gd -- res://ruta.glb`.
 
 Para animaciones, encuadres y colocacion hay que MIRAR, con el MCP de Godot
 (`scene_play` + `runtime_screenshot`). Si algo es demasiado rapido para
@@ -44,9 +64,9 @@ Terminar, verificar y parar. Ofrecerlo en una linea, no ejecutarlo.
 Si para probar otro valor hay que editar el script y volver a correr, ese numero
 esta en el lugar equivocado: `@export_range(min, max, paso)` lo pone en el
 Inspector, con deslizador y en caliente mientras corre. `const` queda solo para
-lo que NO se tunea: rutas `res://`, indices de zona, tablas de datos. El proyecto
-tenia 2158 lineas de GDScript y cero `@export`; `golpe.gd` ya migro sus 27
-numeros de feel, `campo.gd` y `juego.gd` todavia no.
+lo que NO se tunea: rutas `res://`, nombres de malla, tablas de datos. El proyecto
+tenia 2158 lineas de GDScript y cero `@export`; `impulso.gd` ya migro sus 27
+numeros de feel, `mapa.gd` y `juego.gd` todavia no.
 
 **IMPORTANTE: las escenas se autoran en el editor, no se construyen en `_ready`.**
 Lo que va en el editor: composicion fija (camara, luz, entorno, UI, modelos
@@ -54,12 +74,12 @@ colocados unos sobre otros). Lo que va en codigo: solo lo procedural, que
 depende de datos que no existen hasta correr (altura del terreno, sembrado
 aleatorio). Costo aprendido: colocar la jaula en la caja de la camioneta fueron
 cuatro rondas de constante -> correr -> captura -> corregir; en el editor eran
-diez segundos. Y el tee estuvo clavado como `Vector2(1020.0, 821.3)` con ocho
+diez segundos. Y la salida estuvo clavada como `Vector2(1020.0, 821.3)` con ocho
 lineas de comentario explicando como se palpo a rayos: hoy es un `Marker3D` que
 se arrastra.
 
 El proyecto ya paso por esa migracion: camara, sol, entorno, UI, portada, el
-piche y el campo estan en `.tscn`. Los `.new()` que quedan son legitimos
+piche y el mapa estan en `.tscn`. Los `.new()` que quedan son legitimos
 (`SurfaceTool`, `ImmediateMesh`, materiales, particulas, `InputEventKey`). Si
 vuelve a aparecer un `.new()` de un nodo que existe siempre, esta mal.
 
@@ -79,9 +99,9 @@ de `get_node("..")` al padre. Senales hacia arriba, llamadas hacia abajo.
 (Ver `escenas/Jaula.tscn` + `scripts/jaula.gd`.)
 
 Toda logica no trivial deja un assert en `_self_check()`. Y el assert tiene que
-poder fallar: si empujas la bola a mano mientras `_conducir()` la congela cada
+poder fallar: si empujas el piche a mano mientras `_conducir()` lo congela cada
 tick, se queda en 0.00 y el assert de "no se sale" pasa por no moverse nunca.
-Conducir por el camino real (poner `golpe.mira` y apretar la tecla con
+Conducir por el camino real (poner `impulso.mira` y apretar la tecla con
 `Input.parse_input_event`), no simular por atajos.
 
 Marcar los atajos deliberados con un comentario `ponytail:` que nombre el techo
@@ -91,11 +111,11 @@ y por donde se sube.
 
 **Los rayos de altura paran en la PRIMERA colision, que bajo un arbol es la copa
 y no el suelo.** Costo el area pintada convertida en un telon rojo delante de la
-camara y la camioneta trepando follaje. Usar `campo.altura_suelo()`, que pela capas hasta el suelo, o
-`campo.altura_terreno(x, z, techo)` con el techo justo encima de lo que buscas.
+camara y la camioneta trepando follaje. Usar `mapa.altura_suelo()`, que pela capas hasta el suelo, o
+`mapa.altura_terreno(x, z, techo)` con el techo justo encima de lo que buscas.
 
 **`Transform3D * AABB` REALINEA la caja con los ejes.** Encadenar dos (ir a
-mundo y volver) la infla. Con la jaula girada hacia la bandera, una jaula de 2 m
+mundo y volver) la infla. Con la jaula girada hacia la meta, una jaula de 2 m
 salia de 3.13 y una puerta de 12 cm salia de 63: los muros quedaban lejos y el
 hueco era un porton. Componer transformadas locales, una sola conversion.
 
@@ -125,7 +145,7 @@ Forzando solo la horizontal, la gravedad se come el ascenso: el impulso pasaba
 de 26 m a 6.
 
 **No todo numero que imprime un assert sirve como senal de regresion.** El del
-primer impulso (`la bola sale a X m de la jaula`) oscila entre 1.6 y 18.7 con el
+primer impulso (`el piche sale a X m de la jaula`) oscila entre 1.6 y 18.7 con el
 mismo codigo: la dispersion decide si el piche cruza el hueco de la puerta o
 rebota en el marco. Antes de perseguir una regresion por un numero, correr la
 misma version dos o tres veces.
@@ -137,17 +157,25 @@ cruzando el encuadre, las dos por eso.
 ## Mapa del codigo
 
 - `escenas/Juego.tscn` — la escena del juego: `Camara`, `Sol`, `Entorno`, `UI`,
-  `Portada`, `Golpe`, y las instancias `Campo` y `Piche`. Aca se tunea lo visual.
-- `escenas/Campo.tscn` — el glb del muelle ya recentrado, mas los `Marker3D`
-  `Tee` y `Bandera`. Mover el tee es arrastrar el marcador.
+  `Portada`, `Impulso`, y las instancias `Mapa` y `Piche`. Aca se tunea lo visual.
+- `escenas/mapas/Muelle.tscn` — el glb del muelle ya recentrado, mas el `Marker3D`
+  `Salida`. La meta no es un marcador: es la malla `CAMIONETA` del propio glb.
 - `escenas/Piche.tscn` — el cuerpo rigido, su esfera de colision, el modelo y la
   estela.
-- `escenas/piezas/` — `Bandera.tscn` y `Animal.tscn`, placeholders pensados para
-  cambiarse por el modelo bueno arrastrandolo encima.
-- `scripts/juego.gd` — reglas, marcador, intro, jaula, cinematica, area. Es el
-  monolito: ~840 lineas. Lo que salga de aca deberia salir como escena.
-- `scripts/campo.gd` — el campo, alturas por rayo, zonas, y el sembrado de
+- `escenas/piezas/` — `Animal.tscn`, placeholder pensado para cambiarse por el
+  modelo bueno arrastrandolo encima.
+- `escenas/Menu.tscn` + `scripts/menu.gd` — la portada. JUGAR y TIENDA cambian
+  de escena; AJUSTES todavia avisa que no.
+- `escenas/Tienda.tscn` + `scripts/tienda.gd` — la tienda de skins. Las ocho
+  cartas son `AtlasTexture` recortando `ui/skins_lamina.png` (4x2 de 384x512):
+  cambiar el arte es reemplazar UN png, y mover una carta es tocar su `region`.
+  Comprar todavia no hace nada.
+- `herramientas/ver_ui.gd` — abre una pantalla con render y guarda captura, para
+  mirar UI sin el MCP.
+- `scripts/juego.gd` — reglas, intro, jaula, cinematica. Es el monolito:
+  ~880 lineas. Lo que salga de aca deberia salir como escena.
+- `scripts/mapa.gd` — el mapa, alturas por rayo, la meta y el sembrado de
   fauna y basura.
-- `scripts/golpe.gd` — apuntado, potencia, mando y camara.
+- `scripts/impulso.gd` — apuntado, potencia, mando y camara.
 - `scripts/util.gd` — aerodinamica y mallas provisionales.
 - `scripts/jaula.gd` + `escenas/Jaula.tscn` — la jaula de salida, con su puerta.
