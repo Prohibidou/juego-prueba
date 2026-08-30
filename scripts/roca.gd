@@ -24,6 +24,7 @@ const DENSIDAD := 2600.0
 @onready var _forma: CollisionShape3D = $Forma
 
 var _radio := 1.0
+var _nacio := 0.0
 
 
 ## El tamano se pone ANTES de meterla en el arbol: _ready() es quien lo aplica,
@@ -37,6 +38,7 @@ func radio() -> float:
 
 
 func _ready() -> void:
+	_nacio = _ahora()
 	_modelo.scale = Vector3.ONE * (_radio / RADIO_MODELO)
 	# la forma es propia de esta roca: sin duplicar, todas las piedras
 	# compartirian la misma esfera y la ultima le pisaria el radio a las demas
@@ -44,6 +46,18 @@ func _ready() -> void:
 	esfera.radius = _radio
 	_forma.shape = esfera
 	mass = DENSIDAD * 4.0 / 3.0 * PI * pow(_radio, 3)
+
+
+## Lleva rodando mas de `segundos`. Quien la solto la borra por aca: una piedra
+## que se encajo en un arbol al lado del camino no se iria nunca sola.
+## En tiempo REAL: `Engine.time_scale` sirve para mirar la fisica al ralenti, no
+## para que las piedras vivan cinco veces mas.
+func vieja(segundos: float) -> bool:
+	return _ahora() - _nacio > segundos
+
+
+func _ahora() -> float:
+	return Time.get_ticks_msec() / 1000.0
 
 
 ## El piche esta dentro de la piedra. Geometria, no contactos: ver la cabecera.

@@ -16,9 +16,10 @@ class_name Camioneta
 ## Cuanto espera despues de arrancar el mapa antes de moverse. Da el respiro
 ## para entender que hay que perseguirla.
 @export_range(0.0, 10.0, 0.1) var espera := 1.5
-## A cuanto de su caja cuenta como alcanzada. Subirse a una camioneta que
-## anda es otro juego; con acercarse alcanza.
-@export_range(0.5, 10.0, 0.1) var alcance := 2.5
+## A cuanto de la CARROCERIA cuenta como alcanzada. Subirse a una camioneta
+## que anda es otro juego; con tocarla alcanza. Es distancia a la chapa, no al
+## centro, asi que 1 m se lee como "la toco".
+@export_range(0.2, 10.0, 0.1) var alcance := 1.0
 ## Cuanto sube el modelo sobre el suelo, para que las ruedas apoyen.
 @export_range(-2.0, 2.0, 0.05) var alto_ruedas := 0.0
 
@@ -69,6 +70,10 @@ func _apoyar() -> void:
 
 ## Su caja en coordenadas de mundo, AHORA. Se recalcula porque se mueve: una
 ## caja cacheada al arrancar dejaria la meta clavada donde ya no esta.
+## OJO: esta caja esta REALINEADA con los ejes del mundo, asi que girada mide
+## mas que la camioneta -una de 4x8 en diagonal da 8.5x8.5-. Vale para el
+## centro y el alto (que es para lo que la usan el HUD y la camara), NO para
+## medir distancias: eso va en ejes del modelo, en _a_la_carroceria().
 func caja() -> AABB:
 	return Transform3D(_modelo.global_basis, _modelo.global_position) * _caja_modelo
 
@@ -80,29 +85,63 @@ func alcanzada(pos: Vector3) -> bool:
 	return _a_la_carroceria(pos) < alcance
 
 
-## Distancia del punto a la carroceria (a la caja, no a su centro): si no, una
-## camioneta de 8 m se "alcanzaria" desde mas lejos de frente que de costado.
+## Distancia del punto a la carroceria, EN EJES DEL MODELO.
+##
+## No con la caja de mundo: `Transform3D * AABB` la realinea con los ejes y la
+## infla, asi que una camioneta de 4x8 puesta en diagonal pasa a medir 8.5x8.5
+## y la meta se ganaba metros antes de tocarla. Se lleva el punto a ejes de la
+## camioneta y ahi la caja es la de verdad (ver CLAUDE.md).
 func _a_la_carroceria(pos: Vector3) -> float:
-	var c := caja()
+	var local := _modelo.global_transform.affine_inverse() * pos
+	var c := _caja_modelo
 	var cerca := Vector3(
-		clampf(pos.x, c.position.x, c.position.x + c.size.x),
-		clampf(pos.y, c.position.y, c.position.y + c.size.y),
-		clampf(pos.z, c.position.z, c.position.z + c.size.z))
-	return pos.distance_to(cerca)
+		clampf(local.x, c.position.x, c.position.x + c.size.x),
+		clampf(local.y, c.position.y, c.position.y + c.size.y),
+		clampf(local.z, c.position.z, c.position.z + c.size.z))
+	return local.distance_to(cerca)
 
 
 ## A que distancia minima le pasa el recorrido a un punto en sus primeros
 ## `metros`. Sirve para comprobar que la ruta se ALEJA de la salida: si le pasa
 ## por encima, la camioneta va a buscar al piche y el mapa se gana quieto.
 func roza_en_la_salida(punto: Vector3, metros := 90.0) -> float:
-	var c := (get_parent() as Path3D).curve
-	var t := get_parent() as Node3D
 	var minimo := INF
 	var d := 0.0
 	while d < metros:
-		minimo = minf(minimo, (t.global_transform * c.sample_baked(d)).distance_to(punto))
+		minimo = minf(minimo, punto_ruta(d).distance_to(punto))
 		d += 2.0
 	return minimo
+
+
+## Cuanto mide el recorrido entero, en metros.
+func largo() -> float:
+	return (get_parent() as Path3D).curve.get_baked_length()
+
+
+## Un punto del recorrido, en mundo, a `metros` del principio. De aqui salen la
+## basura y las piedras: lo que hay que recorrer es ESTO, no la recta a la
+## camioneta, que se va. Su ALTURA no vale -la curva se dibuja en planta-: quien
+## lo use pone la suya con un rayo.
+func punto_ruta(metros: float) -> Vector3:
+	var t := get_parent() as Node3D
+	return t.global_transform * (get_parent() as Path3D).curve.sample_baked(
+		clampf(metros, 0.0, largo()))
+
+
+## A cuantos metros del principio del recorrido le queda mas cerca `pos`. Es
+## por donde va el que persigue, y sirve para soltarle piedras por delante.
+func avance(pos: Vector3) -> float:
+	var t := get_parent() as Node3D
+	return (get_parent() as Path3D).curve.get_closest_offset(
+		t.global_transform.affine_inverse() * pos)
+
+
+## A que distancia EN PLANTA le pasa el recorrido a un punto. En planta porque
+## la y de la curva no vale: comparar alturas dirian que la ruta pasa lejos de
+## un sitio que pisa.
+func dista_a_ruta(pos: Vector3) -> float:
+	var p := punto_ruta(avance(pos))
+	return Vector2(p.x - pos.x, p.z - pos.z).length()
 
 
 ## La caja del modelo tal cual viene, en ejes del propio modelo.

@@ -21,6 +21,10 @@ const CAIDA_MAX := 0.5
 # no se marcaba ni una, porque el impulso a tope ya no llega a esa velocidad.
 const VEL_MARCA := 8.0
 const ESTELA_VEL := 10.0   # a partir de aqui el vuelo deja estela; tambien va con VEL_MAX
+# Por encima de esta velocidad el impulso todavia esta en lo suyo y el mando no
+# lo corta: cancelar un lanzamiento a 20 m/s se siente a tiron. Por debajo, el
+# piche ya viene rodando y el jugador puede tomarlo cuando quiera.
+@export_range(1.0, 26.0, 0.5) var VEL_TOMAR := 12.0
 const MAX_MARCAS := 30
 # --- direccion en el aire ---
 const AIRE_ACEL := 11.0     # m/s2 laterales mientras se dirige
@@ -641,6 +645,19 @@ func _physics_process(dt: float) -> void:
 		vel = piche.linear_velocity
 	_en_aire = volando
 
+	# EL JUGADOR MANDA POR ENCIMA DE LA FISICA. Mientras el piche rueda o
+	# rebota, apretar una direccion lo toma ahi mismo; no hay que esperar a que
+	# se detenga solo. Eso ultimo era la regla de golf de "la bola tiene que
+	# parar antes del proximo tiro", y en una pendiente no pasaba nunca: se
+	# rodaba cuesta abajo con los controles bloqueados hasta dar con un llano.
+	#
+	# El rebote se conserva: si no tocas nada, el impulso termina de rodar como
+	# siempre. Lo que cambia es que ya no estas obligado a mirarlo.
+	if (not volando and not _empujando and not impulso.cine
+			and vel.length() < VEL_TOMAR and impulso.mando() != Vector3.ZERO):
+		_tomar_control(pos)
+		return
+
 	# mientras abre la puerta la velocidad la pone el guion, no la fisica: es el
 	# mismo disparo a camara lenta, asi que al soltarse sigue como si nada
 	if _empujando:
@@ -734,6 +751,22 @@ func _sobre_plataforma() -> Node3D:
 	if cuerpo is Node3D and (cuerpo as Node3D).is_in_group("plataformas"):
 		return cuerpo as Node3D
 	return null
+
+
+## El jugador agarra el piche a mitad de rodada. Es lo mismo que asentarse pero
+## sin congelarlo: no se le toca la velocidad, porque _conducir() la reescribe
+## en el mismo tick con lo que diga el mando.
+func _tomar_control(pos: Vector3) -> void:
+	quieto = true
+	_vel_andar = 0.0
+	piche.angular_velocity = Vector3.ZERO
+	_t_lento = 0.0
+	_t_caida = 0.0
+	_ultimo = Vector2(pos.x - _desde.x, pos.z - _desde.z).length()
+	if _enjaulado():
+		# igual que al asentarse: nunca dejarlo encerrado
+		_jaula.tirar_puerta(PORTAZO_EMPUJE, PORTAZO_SUELTA)
+		_jaula.abrir()
 
 
 ## El stick izquierdo rueda el piche mientras esta parado. En el aire ese mismo
@@ -1155,6 +1188,30 @@ func _alcance_impulso(f := 1.0) -> float:
 	return Vector2(fin.x, fin.z).length()
 
 
+## Las piedras caen SOBRE la ruta que hay que perseguir -si cayeran en
+## cualquier ladera no estorbarian- y se limpian solas al quedar lejos. Lo
+## segundo es lo que evita que la cuenta de cuerpos rigidos suba sin techo.
+func _check_rocas() -> void:
+	if mapa.rocas_cada <= 0.0:
+		return
+	var p := piche.global_position
+	for intento in 5:
+		mapa.rodar_rocas(999.0, p)     # 999 para que no espere a rocas_cada
+		if not mapa.rocas.is_empty():
+			break
+	assert(not mapa.rocas.is_empty(), "%s: no solto ninguna piedra" % mapa.name)
+	var r: Roca = mapa.rocas[0]
+	var d := mapa.camioneta().dista_a_ruta(r.global_position)
+	print("roca: se suelta a %.0f m de la ruta y %.0f m del piche"
+		% [d, r.global_position.distance_to(p)])
+	assert(d < mapa.roca_ladera + mapa.roca_dispersa + 5.0,
+		"%s: las piedras caen fuera de la ruta" % mapa.name)
+	assert(not mapa.roca_encima(p, Util.RADIO), "una piedra nace encima del piche")
+	# y el que se aleja se borra: aca se hace de golpe llevandose el piche lejos
+	mapa.rodar_rocas(0.0, p + Vector3(mapa.roca_lejos * 2.0, 0, 0))
+	assert(mapa.rocas.is_empty(), "la piedra lejos del piche no se limpia")
+
+
 ## Lo que se comprueba en CADA mapa que se carga, sea cual sea: que la salida
 ## este puesta, que la meta se pueda alcanzar y -si el mapa trae jaula- que la
 ## jaula quede donde el artista la dejo. Los mapas nuevos entran por aca.
@@ -1201,6 +1258,18 @@ func _check_mapa() -> void:
 			print("camioneta: en sus primeros 90 m pasa a %.0f m de la salida" % roce)
 			assert(roce > mapa.camioneta().alcance + 6.0,
 				"%s: la ruta le pasa por encima a la salida" % mapa.name)
+			# La basura se siembra POR LA RUTA, que es por donde se pasa. Con la
+			# recta salida-camioneta se amontonaba toda en la salida -la
+			# camioneta arranca al lado- y el resto del cerro se hacia sin nada
+			# que recoger, o sea sin stamina.
+			var lejos := 0
+			for b2 in mapa.basura:
+				if mapa.camioneta().avance(b2.global_position) > 60.0:
+					lejos += 1
+			print("basura: %d de %d piezas mas alla de los primeros 60 m de ruta"
+				% [lejos, mapa.basura.size()])
+			assert(lejos > 0, "%s: la basura quedo amontonada en la salida" % mapa.name)
+			_check_rocas()
 		else:
 			# la meta es SUBIRSE a la camioneta: encima y posado cuenta; al
 			# lado, debajo, o pasandole por arriba a toda velocidad, no

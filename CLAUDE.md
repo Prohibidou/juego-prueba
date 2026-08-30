@@ -50,6 +50,19 @@ salir).** Sin jaula el piche arranca de pie en el `Marker3D` `Salida` y no hay
 cinematica. Para ver que trae un glb antes de armarle la escena:
 `--script res://herramientas/ver_glb.gd -- res://ruta.glb`.
 
+Poder moverse despues de caer en una pendiente tiene su propio probador,
+porque el self-check corre en el muelle y ahi no hay laderas:
+
+```
+... --headless --path . --script res://herramientas/probar_pendiente.gd
+```
+
+Da dos columnas y hay que leer las dos. SIN MANDO puede ser largo -es el rebote
+del impulso, y esta bien que ruede-. CON MANDO tiene que ser decimas de
+segundo: es lo que tarda en obedecer desde que apretas W. Si esa sube, el
+jugador volvio a quedar esperando a que la fisica termine, que es el bug viejo
+de golf.
+
 Para animaciones, encuadres y colocacion hay que MIRAR, con el MCP de Godot
 (`scene_play` + `runtime_screenshot`). Si algo es demasiado rapido para
 capturarlo, bajar `Engine.time_scale` un rato: las proporciones entre lo que se
