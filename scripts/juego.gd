@@ -28,6 +28,10 @@ const AIRE_TIEMPO := 1.1    # segundos de timon por golpe
 const CONDUCE_ACEL := 7.0   # m/s2 que mete el stick izquierdo
 const CONDUCE_MAX := 4.5    # m/s: es andar, no un golpe
 const GIRO_MAX := 9.0       # rad/s: por encima de esto la vuelta es un borron
+# En el aire no hay rodada que copiar: el piche gira sobre su propio eje a
+# ritmo fijo, para que el impulso se lea como voltereta y no como una bola
+# que flota tiesa. Mas alla de GIRO_MAX la vuelta es un borron.
+@export_range(0.0, 15.0, 0.5) var GIRO_VUELO := 7.0  # rad/s de voltereta en vuelo
 # --- stamina ---
 # Se anda libre, sin radio: lo unico que cuesta stamina es el impulso (G). La
 # basura del campo la repone: es lo que obliga a desviarse de la linea recta
@@ -201,7 +205,11 @@ func _rodar(e: float, dt: float) -> Basis:
 		_dir_rueda = plana.normalized()
 		_eje_rueda = Vector3.UP.cross(_dir_rueda)
 		var radio := _diam_bola * e * 0.5
-		if dt > 0.0 and radio > 0.0:
+		if _en_aire:
+			# la voltereta usa el mismo eje y el mismo acumulador que la
+			# rodada: el despegue y el aterrizaje no pegan saltos de angulo
+			_angulo_rueda += GIRO_VUELO * dt
+		elif dt > 0.0 and radio > 0.0:
 			_angulo_rueda += minf(plana.length() / radio, GIRO_MAX) * dt
 	elif dt > 0.0 and golpe.activo:
 		# quieto o girando en el sitio: A/D solo cambia la mira (golpe.gd), no
@@ -783,6 +791,15 @@ func _self_check() -> void:
 	assert(_angulo_rueda > antes, "el piche no rueda")
 	assert(is_zero_approx(_eje_rueda.dot(bola.linear_velocity.normalized())),
 		"la cara plana del disco no queda perpendicular a la marcha")
+	# y en vuelo la voltereta es a ritmo fijo, no la rodada aparente (que con
+	# el modelo agrandado seria casi nula y el piche volaria tieso)
+	_en_aire = true
+	var en_tierra := _angulo_rueda
+	_escalar_vista(6.0, 0.1)
+	var vuelta := _angulo_rueda - en_tierra
+	print("voltereta en vuelo: %.2f rad en 0.1 s (GIRO_VUELO=%.1f)" % [vuelta, GIRO_VUELO])
+	assert(absf(vuelta - GIRO_VUELO * 0.1) < 0.001, "el piche no da la voltereta en vuelo")
+	_en_aire = false
 	bola.linear_velocity = Vector3.ZERO
 	_angulo_rueda = 0.0
 	assert(campo.basura.size() > 0, "el hoyo se quedo sin basura que recoger")
