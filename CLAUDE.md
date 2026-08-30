@@ -40,6 +40,14 @@ mueve no cambian.
 **IMPORTANTE: no hacer `git commit` ni `git push` sin que el usuario lo pida.**
 Terminar, verificar y parar. Ofrecerlo en una linea, no ejecutarlo.
 
+**IMPORTANTE: un numero que se tunea va en `@export`, no en `const`.**
+Si para probar otro valor hay que editar el script y volver a correr, ese numero
+esta en el lugar equivocado: `@export_range(min, max, paso)` lo pone en el
+Inspector, con deslizador y en caliente mientras corre. `const` queda solo para
+lo que NO se tunea: rutas `res://`, indices de zona, tablas de datos. El proyecto
+tenia 2158 lineas de GDScript y cero `@export`; `golpe.gd` ya migro sus 27
+numeros de feel, `campo.gd` y `juego.gd` todavia no.
+
 **IMPORTANTE: las escenas se autoran en el editor, no se construyen en `_ready`.**
 Lo que va en el editor: composicion fija (camara, luz, entorno, UI, modelos
 colocados unos sobre otros). Lo que va en codigo: solo lo procedural, que
@@ -55,8 +63,12 @@ piche y el campo estan en `.tscn`. Los `.new()` que quedan son legitimos
 (`SurfaceTool`, `ImmediateMesh`, materiales, particulas, `InputEventKey`). Si
 vuelve a aparecer un `.new()` de un nodo que existe siempre, esta mal.
 
-Para autorar con el MCP hay skill: `/godot-escena`. Para verificar,
-`/godot-verificar`.
+Cuatro skills, en orden de uso: `/godot-mcp` (que sabe hacer el editor: 332
+comandos, leerlo ANTES de escribir GDScript para algo que se ve o se siente),
+`/godot-mecanicas` (que esta mal y que no en la fisica, los estados y la
+camara de ESTE juego), `/godot-escena` (autorar), `/godot-verificar`
+(comprobar) y `/godot-refs` (14 guias genericas de Godot para funcionalidad
+que el proyecto todavia no tiene; donde choquen, gana `/godot-mecanicas`).
 
 No verificar solo con asserts. Los asserts confirman que el codigo CORRE, no que
 se VEA. Ya pasaron todos mientras la pantalla estaba entera roja y la camara
