@@ -159,15 +159,28 @@ var mapa: Mapa                # lo instancia _cargar_mapa(), no esta en Juego.ts
 @onready var barra_stam: ProgressBar = $UI/BarraStam
 @onready var ayuda: Label = $UI/Ayuda
 @onready var sonido: Sonido = $Sonido
+@onready var _cinematica: Cinematica = $Cinematica
+@onready var _como_jugar: ComoJugar = $ComoJugar
+@onready var _notas: Notas = $Notas
 
 
 func _ready() -> void:
 	randomize()
 	_t_arranque = Time.get_ticks_msec()
-	# suenan ya, durante la carga: la portada esta cinco segundos en pantalla
-	# y en silencio parece que el juego se colgo
-	sonido.musica(true)
-	sonido.ambiente(true)
+	# La cinematica (escenas/Cinematica.tscn, hijo de este nodo) se monta y
+	# corre sola: su _ready() ya paso -los hijos van antes que el padre-, asi
+	# que _cinematica.lista() ya dice si hay video en pantalla o no (headless:
+	# siempre lista, sin reproducir nada). El .ogv trae su propio audio, y se
+	# pisaria con la musica y el ambiente del juego: esperan a que termine -o
+	# lo salteen- para entrar con su fundido de siempre. Sin cinematica de por
+	# medio arrancan ya, como antes: en silencio parece que el juego se colgo.
+	if _cinematica.lista():
+		sonido.musica(true)
+		sonido.ambiente(true)
+	else:
+		_cinematica.terminada.connect(func():
+			sonido.musica(true)
+			sonido.ambiente(true))
 	_preparar_piche()
 	_conectar_tactil()
 	barra_stam.max_value = STAMINA_MAX   # el .tscn no puede leer la constante
@@ -186,14 +199,46 @@ func _ready() -> void:
 	var i := args.find("--mapa")
 	if i >= 0 and i + 1 < args.size():
 		pedido = clampi(int(args[i + 1]), 0, mapas.size() - 1)
+	# El mapa y el self-check cargan EN PARALELO con la cinematica: un video
+	# de 23 s tapa de sobra esos segundos, tanto si se ve entero como si se
+	# saltea a mitad de camino.
 	await _cargar_mapa(pedido)
 	listo = true
 	await _self_check()
+	if not _cinematica.lista():
+		await _cinematica.terminada
 	await _quitar_portada()
 
+	# El cartel de como-jugar, una sola vez por partida (este _ready no vuelve
+	# a correr ni en _reiniciar() ni al cambiar de mapa): recien cuando el
+	# piche ya esta arriba del barco, sin portada ni video de por medio.
+	# Bloquea -se espera- porque mientras se lee no hay partida que jugar
+	# todavia. Se resuelve solo en headless (ver como_jugar.gd).
+	if mapa.tiene_jaula():
+		await _como_jugar.mostrar()
+	# recien ahora Tab: mientras se ve el cartel de como-jugar (o se esta
+	# quitando la portada), pausar pisaria timers a medio terminar o abriria
+	# el menu de pausa por debajo del cartel.
+	pausa.habilitada = true
+	if mapa.tiene_jaula():
+		# las notas de ayuda -G para escapar, despues recolectar basura, y por
+		# ultimo TAB para pausar- solo tienen sentido con jaula de por medio:
+		# sin ella no hay puerta que reventar ni "escapar" que explicar. La
+		# conexion va ACA, recien ahora, y no arriba con reintentar/salir: el
+		# self-check ya abrio y cerro la pausa de mentira para probar Tab
+		# (ver _self_check), y esa conexion hecha antes marcaria _tab_cancelada
+		# antes de que la nota exista. No se espera: corren en paralelo a la
+		# partida de verdad (ver notas.gd).
+		pausa.abierta_evento.connect(_notas.cancelar_tab)
+		_notas.mostrar()
 
-## Se va cuando el mapa esta listo Y han pasado CARGA_MIN segundos: si la
-## maquina carga rapido, la portada igual se ve el rato que tiene que verse.
+
+## Se va cuando el mapa esta listo, el self-check termino y la cinematica ya
+## se resolvio -vista entera, salteada, o headless- Y ademas han pasado
+## CARGA_MIN segundos: si todo eso pasa mas rapido, la portada igual se ve el
+## rato que tiene que verse. Con la cinematica de por medio (23 s, mas lo que
+## tarde el self-check) esta espera casi nunca llega a activarse; queda de
+## resguardo para cuando se saltea el video de una y el self-check es rapido.
 func _quitar_portada() -> void:
 	var lleva := (Time.get_ticks_msec() - _t_arranque) / 1000.0
 	if lleva < CARGA_MIN:
@@ -203,9 +248,6 @@ func _quitar_portada() -> void:
 	# ponytail: se esconde, no se libera. Hace falta entera para tapar el
 	# cambio de mapa, que tambien tarda. La transicion todavia no esta hecha.
 	t.tween_callback(func(): _portada.visible = false)
-	# recien ahora: con la portada puesta, pausar congelaria los
-	# temporizadores que la estan quitando y no se iria nunca
-	pausa.habilitada = true
 
 
 ## El piche esta en Piche.tscn. Aca queda solo lo que un .tscn no guarda: el
@@ -331,6 +373,9 @@ func _montar_jaula() -> void:
 
 	_jaula.vigilar(piche)
 	_jaula.reventada.connect(_reventar_puerta)
+	# la nota de "escapar" ya no aplica en cuanto la puerta revento: saltar
+	# directo a la de "recolecta basura" (ver notas.gd)
+	_jaula.reventada.connect(func(_v): _notas.saltar_a_basura())
 	# sus cuerpos fuera de los rayos de altura: si no, el rayo del salida da en el
 	# techo de la jaula y el piche se coloca dos metros mas arriba
 	mapa.excluir = [piche.get_rid()]
@@ -1493,6 +1538,48 @@ func _self_check() -> void:
 	if mapa.tiene_jaula():
 		assert(is_instance_valid(_jaula) and _jaula.puerta_entera() and _jaula.cerrada(),
 			"reintentar no devuelve al piche a la jaula")
+
+	# --- arranque: cinematica, como-jugar y las notas de ayuda ---
+	# El VideoStream tiene que estar puesto de verdad en el reproductor: si el
+	# .ogv se rompe en la importacion, el juego seguiria arrancando en
+	# silencio -sin video- y nadie se entera hasta que alguien lo mira.
+	var reproductor := _cinematica.get_node("Video") as VideoStreamPlayer
+	assert(reproductor.stream != null, "la cinematica se quedo sin VideoStream")
+	print("cinematica: stream %s (%s)"
+		% [reproductor.stream.resource_path, reproductor.stream.get_class()])
+	# El cartel de como-jugar, con su textura puesta (no un placeholder vacio).
+	var cartel := _como_jugar.get_node("Fondo/Cartel") as TextureRect
+	assert(cartel.texture != null, "el cartel de como-jugar se quedo sin textura")
+	print("como-jugar: cartel %dx%d" % [cartel.texture.get_width(), cartel.texture.get_height()])
+	# Las notas de ayuda: las dos imagenes cargadas, y la tercera -que no
+	# tiene imagen, es texto estilado a mano (ver notas.gd)- con su texto puesto.
+	assert(_notas.tex_g != null, "nota_g.png no carga")
+	assert(_notas.tex_basura != null, "nota_basura.png no carga")
+	var texto_tab := _notas.get_node("Hueco/Texto/Fila/Mensaje") as Label
+	assert(texto_tab.text != "", "la nota de TAB (sin imagen: es texto) se quedo sin texto")
+	print("notas: G %dx%d | basura %dx%d | tab \"%s\""
+		% [_notas.tex_g.get_width(), _notas.tex_g.get_height(),
+		   _notas.tex_basura.get_width(), _notas.tex_basura.get_height(), texto_tab.text])
+	if DisplayServer.get_name() == "headless":
+		# la secuencia entera de arranque (ver _ready) ya paso por aca sin
+		# bloquear nada: si esto no fuera true, el self-check se hubiera
+		# quedado esperando 23 s de video que headless no reproduce
+		assert(_cinematica.lista(), "en headless la cinematica no se resolvio sola: colgaria 23 s")
+		assert(sonido.get_node("Musica").playing,
+			"sin cinematica que lo tape, la musica no arranco en el boot")
+		# y ni el cartel de como-jugar ni las notas pueden bloquear ni dejar
+		# el arbol pausado esperando un click que no va a llegar
+		var antes2 := Time.get_ticks_msec()
+		await _como_jugar.mostrar()
+		await _notas.mostrar()
+		_notas.saltar_a_basura()   # no debe romper aunque la secuencia nunca arranco
+		_notas.cancelar_tab()      # idem
+		var tarda2 := Time.get_ticks_msec() - antes2
+		print("arranque: en headless como-jugar+notas tarda %d ms, pausado=%s, notas visibles=%s"
+			% [tarda2, get_tree().paused, _notas.visible])
+		assert(tarda2 < 200, "como-jugar o las notas bloquean en headless")
+		assert(not get_tree().paused, "como-jugar dejo el arbol pausado en headless")
+		assert(not _notas.visible, "las notas quedan puestas en headless")
 
 	print("self-check OK")
 	# Las pruebas de abajo mueven el piche de verdad y son del MUELLE: la jaula

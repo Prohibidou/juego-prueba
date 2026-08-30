@@ -1,0 +1,41 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/como_jugar.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://ui/como_jugar.png" id="2_cartel"]
+[ext_resource type="Texture2D" path="res://ui/botones/cerrar.png" id="3_cerrar"]
+
+[node name="ComoJugar" type="CanvasLayer"]
+process_mode = 3
+layer = 60
+script = ExtResource("1_script")
+
+[node name="Fondo" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.02, 0.02, 0.04, 0.66)
+
+[node name="Cartel" type="TextureRect" parent="Fondo"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 80.0
+offset_top = 60.0
+offset_right = -80.0
+offset_bottom = -60.0
+texture = ExtResource("2_cartel")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Cerrar" type="TextureButton" parent="Fondo"]
+custom_minimum_size = Vector2(64, 64)
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -96.0
+offset_top = 32.0
+offset_right = -32.0
+offset_bottom = 96.0
+texture_normal = ExtResource("3_cerrar")
+ignore_texture_size = true
+stretch_mode = 5

@@ -1,0 +1,34 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/cinematica.gd" id="1_script"]
+[ext_resource type="VideoStream" path="res://video/cinematica_inicio.ogv" id="2_video"]
+
+[node name="Cinematica" type="CanvasLayer"]
+layer = 110
+script = ExtResource("1_script")
+
+[node name="Video" type="VideoStreamPlayer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+stream = ExtResource("2_video")
+expand = true
+autoplay = false
+
+[node name="Saltar" type="Label" parent="."]
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -280.0
+offset_top = -44.0
+offset_right = -24.0
+offset_bottom = -16.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.75)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.85)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 18
+horizontal_alignment = 2
+text = "Cualquier tecla para saltar"

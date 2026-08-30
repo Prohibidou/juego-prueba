@@ -8,6 +8,9 @@
 [ext_resource type="PackedScene" uid="uid://nv4bpr3ue734" path="res://escenas/Piche.tscn" id="6_jv425"]
 [ext_resource type="PackedScene" path="res://escenas/Pausa.tscn" id="7_pausa"]
 [ext_resource type="PackedScene" uid="uid://c3nqhx8vsgm1r" path="res://escenas/Sonido.tscn" id="8_sonido"]
+[ext_resource type="PackedScene" path="res://escenas/Cinematica.tscn" id="9_cinematica"]
+[ext_resource type="PackedScene" path="res://escenas/ComoJugar.tscn" id="10_como_jugar"]
+[ext_resource type="PackedScene" path="res://escenas/Notas.tscn" id="11_notas"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_l3i6u"]
 sky_top_color = Color(0.32, 0.55, 0.9, 1)
@@ -154,6 +157,12 @@ anchor_bottom = 1.0
 texture = ExtResource("3_47w8y")
 expand_mode = 1
 stretch_mode = 6
+
+[node name="Cinematica" parent="." instance=ExtResource("9_cinematica")]
+
+[node name="ComoJugar" parent="." instance=ExtResource("10_como_jugar")]
+
+[node name="Notas" parent="." instance=ExtResource("11_notas")]
 
 [node name="Piche" type="RigidBody3D" parent="." unique_id=2077429810 instance=ExtResource("6_jv425")]
 mass = 0.0459

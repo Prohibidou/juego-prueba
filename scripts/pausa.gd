@@ -17,6 +17,10 @@ class_name Pausa
 signal reintentar()
 ## El jugador quiere irse.
 signal salir()
+## Se abrio -por Tab de verdad, no porque algun cartel lo sugiriera-. La usa
+## quien quiera enterarse de que el jugador ya encontro la pausa solo, sin
+## que se lo digan (ver notas.gd, la nota de "Presionar TAB").
+signal abierta_evento()
 
 @export_range(0.0, 0.4, 0.01) var REALCE := 0.06      # cuanto crece el boton apuntado
 @export_range(0.02, 0.6, 0.01) var REALCE_SEG := 0.12
@@ -71,6 +75,7 @@ func abrir() -> void:
 	_fondo.visible = true
 	get_tree().paused = true
 	_reintentar.grab_focus()   # con mando o teclado ya hay algo elegido
+	abierta_evento.emit()
 
 
 func cerrar() -> void:
