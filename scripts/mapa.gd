@@ -122,6 +122,14 @@ var _rids_mar: Array[RID] = []   # los cuerpos del agua: ahi no se siembra
 
 var _escenario: Node3D
 var _salida := Vector3.ZERO
+# Adonde vuelve el piche tras un chapuzon (mar, hueco del casco, bodega): la
+# caja del barco, fuera de la jaula. Sale de un Marker3D hijo de Salida en la
+# escena del mapa (Rescate en Muelle.tscn): al ser hijo, sigue el transform
+# real de la jaula -Salida se pisa en preparar() con el marcador "jaula" del
+# glb- sin reclavar coordenadas ni giro a mano. INF si el mapa no trae ese
+# marcador (el Cerro, sin barco): ahi "la caja del barco" no significa nada y
+# quien rescate sigue con lo de antes (_firme/_desde en juego.gd).
+var _rescate := Vector3.INF
 # La meta es SUBIRSE A LA CAMIONETA que trae el mapa: se busca su malla al
 # montar el escenario y se guarda su caja en coordenadas de mundo. Un mapa sin
 # camioneta no tiene meta: se avisa por consola y no se puede terminar.
@@ -292,6 +300,20 @@ func pos_salida() -> Vector3:
 	return _salida
 
 
+## Trae marcador propio de rescate (Rescate, hijo de Salida en la escena del
+## mapa): la caja del barco, fuera de la jaula. Sin el -el Cerro, sin barco ni
+## agua- quien rescate sigue cayendo en lo de antes: el ultimo suelo firme o el
+## punto de partida del impulso.
+func tiene_rescate() -> bool:
+	return not is_inf(_rescate.x)
+
+
+## El punto de rescate, ya en mundo. Solo vale si tiene_rescate() es true; sin
+## marcador devuelve INF, para que usarlo sin comprobar reviente a la vista.
+func pos_rescate() -> Vector3:
+	return _rescate
+
+
 ## El punto al que hay que llegar. Con la camioneta NPC se recalcula cada vez:
 ## el HUD, la camara y la mira tienen que seguirla mientras se va.
 func pos_meta() -> Vector3:
@@ -375,6 +397,8 @@ func ir_a() -> void:
 	# barco. El piche SI se apoya en ella, porque las formas van a doble cara.
 	# De ahi salio la fama de que este sitio "cae sobre un hueco del casco".
 	_salida = $Salida.position
+	var rescate := get_node_or_null("Salida/Rescate") as Node3D
+	_rescate = rescate.global_position if rescate else Vector3.INF
 	if _camioneta:
 		_punto_meta = pos_meta()
 		_poblar_fauna()
