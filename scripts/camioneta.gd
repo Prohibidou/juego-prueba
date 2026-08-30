@@ -105,14 +105,43 @@ func _a_la_carroceria(pos: Vector3) -> float:
 ## `metros`. Sirve para comprobar que la ruta se ALEJA de la salida: si le pasa
 ## por encima, la camioneta va a buscar al piche y el mapa se gana quieto.
 func roza_en_la_salida(punto: Vector3, metros := 90.0) -> float:
-	var c := (get_parent() as Path3D).curve
-	var t := get_parent() as Node3D
 	var minimo := INF
 	var d := 0.0
 	while d < metros:
-		minimo = minf(minimo, (t.global_transform * c.sample_baked(d)).distance_to(punto))
+		minimo = minf(minimo, punto_ruta(d).distance_to(punto))
 		d += 2.0
 	return minimo
+
+
+## Cuanto mide el recorrido entero, en metros.
+func largo() -> float:
+	return (get_parent() as Path3D).curve.get_baked_length()
+
+
+## Un punto del recorrido, en mundo, a `metros` del principio. De aqui salen la
+## basura y las piedras: lo que hay que recorrer es ESTO, no la recta a la
+## camioneta, que se va. Su ALTURA no vale -la curva se dibuja en planta-: quien
+## lo use pone la suya con un rayo.
+func punto_ruta(metros: float) -> Vector3:
+	var t := get_parent() as Node3D
+	return t.global_transform * (get_parent() as Path3D).curve.sample_baked(
+		clampf(metros, 0.0, largo()))
+
+
+## A cuantos metros del principio del recorrido le queda mas cerca `pos`. Es
+## por donde va el que persigue, y sirve para soltarle piedras por delante.
+func avance(pos: Vector3) -> float:
+	var t := get_parent() as Node3D
+	return (get_parent() as Path3D).curve.get_closest_offset(
+		t.global_transform.affine_inverse() * pos)
+
+
+## A que distancia EN PLANTA le pasa el recorrido a un punto. En planta porque
+## la y de la curva no vale: comparar alturas dirian que la ruta pasa lejos de
+## un sitio que pisa.
+func dista_a_ruta(pos: Vector3) -> float:
+	var p := punto_ruta(avance(pos))
+	return Vector2(p.x - pos.x, p.z - pos.z).length()
 
 
 ## La caja del modelo tal cual viene, en ejes del propio modelo.

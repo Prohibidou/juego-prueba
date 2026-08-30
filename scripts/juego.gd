@@ -852,6 +852,30 @@ func _tecla(codigo: Key, apretada: bool) -> void:
 	Input.parse_input_event(e)
 
 
+## Las piedras caen SOBRE la ruta que hay que perseguir -si cayeran en
+## cualquier ladera no estorbarian- y se limpian solas al quedar lejos. Lo
+## segundo es lo que evita que la cuenta de cuerpos rigidos suba sin techo.
+func _check_rocas() -> void:
+	if mapa.rocas_cada <= 0.0:
+		return
+	var p := piche.global_position
+	for intento in 5:
+		mapa.rodar_rocas(999.0, p)     # 999 para que no espere a rocas_cada
+		if not mapa.rocas.is_empty():
+			break
+	assert(not mapa.rocas.is_empty(), "%s: no solto ninguna piedra" % mapa.name)
+	var r: Roca = mapa.rocas[0]
+	var d := mapa.camioneta().dista_a_ruta(r.global_position)
+	print("roca: se suelta a %.0f m de la ruta y %.0f m del piche"
+		% [d, r.global_position.distance_to(p)])
+	assert(d < mapa.roca_ladera + mapa.roca_dispersa + 5.0,
+		"%s: las piedras caen fuera de la ruta" % mapa.name)
+	assert(not mapa.roca_encima(p, Util.RADIO), "una piedra nace encima del piche")
+	# y el que se aleja se borra: aca se hace de golpe llevandose el piche lejos
+	mapa.rodar_rocas(0.0, p + Vector3(mapa.roca_lejos * 2.0, 0, 0))
+	assert(mapa.rocas.is_empty(), "la piedra lejos del piche no se limpia")
+
+
 ## Lo que se comprueba en CADA mapa que se carga, sea cual sea: que la salida
 ## este puesta, que la meta se pueda alcanzar y -si el mapa trae jaula- que la
 ## jaula quede donde el artista la dejo. Los mapas nuevos entran por aca.
@@ -881,6 +905,18 @@ func _check_mapa() -> void:
 			print("camioneta: en sus primeros 90 m pasa a %.0f m de la salida" % roce)
 			assert(roce > mapa.camioneta().alcance + 6.0,
 				"%s: la ruta le pasa por encima a la salida" % mapa.name)
+			# La basura se siembra POR LA RUTA, que es por donde se pasa. Con la
+			# recta salida-camioneta se amontonaba toda en la salida -la
+			# camioneta arranca al lado- y el resto del cerro se hacia sin nada
+			# que recoger, o sea sin stamina.
+			var lejos := 0
+			for b2 in mapa.basura:
+				if mapa.camioneta().avance(b2.global_position) > 60.0:
+					lejos += 1
+			print("basura: %d de %d piezas mas alla de los primeros 60 m de ruta"
+				% [lejos, mapa.basura.size()])
+			assert(lejos > 0, "%s: la basura quedo amontonada en la salida" % mapa.name)
+			_check_rocas()
 		else:
 			# la meta es SUBIRSE a la camioneta: encima y posado cuenta; al
 			# lado, debajo, o pasandole por arriba a toda velocidad, no
