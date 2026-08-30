@@ -4,9 +4,9 @@ extends AnimatableBody3D
 ## el salto en vez de pisar suelo quieto.
 ##
 ## La geometria (malla y caja de colision, distintas en cada chapa) se autora
-## en la instancia, en Campo.tscn; este script SOLO mueve.
+## en la instancia, en el .tscn del mapa; este script SOLO mueve.
 ##
-## No busca el mar por su cuenta: se lo pasa Campo con flotar_en(). Sin mar
+## No busca el mar por su cuenta: se lo pasa mapa.gd con flotar_en(). Sin mar
 ## puesto sigue funcionando, solo que sin flotar -queda el vaiven de siempre-.
 ##
 ## AnimatableBody3D con sync_to_physics (su default) empuja al piche si se para
@@ -39,7 +39,7 @@ func _ready() -> void:
 	add_to_group("plataformas")
 
 
-## Llamada hacia abajo: Campo le presenta el mar del que tiene que flotar.
+## Llamada hacia abajo: mapa.gd le presenta el mar del que tiene que flotar.
 func flotar_en(mar: Mar) -> void:
 	_mar = mar
 
@@ -52,7 +52,7 @@ func _physics_process(delta: float) -> void:
 
 	if _mar != null:
 		# La ola se pide en coordenadas de MUNDO -es donde vive- pero lo que se
-		# escribe es la position LOCAL: el nodo Campo esta desplazado, y
+		# escribe es la position LOCAL: el nodo del mapa esta desplazado, y
 		# mezclar los dos espacios dejaba las chapas a veinte metros del agua.
 		var padre := get_parent() as Node3D
 		var mundo: Vector3 = padre.global_transform * p if padre != null else p
@@ -72,6 +72,6 @@ func _physics_process(delta: float) -> void:
 
 ## Cuanto se movio ESTE tick, en mundo. Quien se para encima se lo suma a su
 ## propia posicion: no se confia en que la friccion de sync_to_physics arrastre
-## una bola de 4 cm, y ademas _conducir() la congela al soltar el mando.
+## un piche de 4 cm, y ademas _conducir() lo congela al soltar el mando.
 func empuje() -> Vector3:
 	return _actual - _previo

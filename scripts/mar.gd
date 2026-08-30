@@ -10,7 +10,7 @@ class_name Mar
 ## pantalla estaba en otro sitio.
 ##
 ## No conoce a nadie de fuera. Quien quiera flotar pide altura() y normal(),
-## y es Campo quien se los presenta (llamadas hacia abajo).
+## y es mapa.gd quien se los presenta (llamadas hacia abajo).
 
 # Los cuatro trenes cruzados. Tienen que ser IGUALES que las constantes del
 # mismo nombre en mar.gdshader: si se toca uno hay que tocar el otro.

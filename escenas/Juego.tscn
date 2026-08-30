@@ -1,10 +1,13 @@
 [gd_scene format=3 uid="uid://dyqheyjdjknog"]
 
 [ext_resource type="Script" uid="uid://c5lun48aur4vd" path="res://scripts/juego.gd" id="1_juego"]
-[ext_resource type="Script" uid="uid://twum5knlwid8" path="res://scripts/golpe.gd" id="2_golpe"]
+[ext_resource type="Script" uid="uid://twum5knlwid8" path="res://scripts/impulso.gd" id="2_impulso"]
 [ext_resource type="Texture2D" uid="uid://4fgg535aj87s" path="res://ui/portada.png" id="3_47w8y"]
-[ext_resource type="PackedScene" uid="uid://i61txw5smhdd" path="res://escenas/Campo.tscn" id="4_4ru81"]
+[ext_resource type="PackedScene" uid="uid://i61txw5smhdd" path="res://escenas/mapas/Muelle.tscn" id="4_muelle"]
+[ext_resource type="PackedScene" uid="uid://b2cerromapa2xy" path="res://escenas/mapas/Cerro.tscn" id="5_cerro"]
 [ext_resource type="PackedScene" uid="uid://nv4bpr3ue734" path="res://escenas/Piche.tscn" id="6_jv425"]
+[ext_resource type="PackedScene" path="res://escenas/Pausa.tscn" id="7_pausa"]
+[ext_resource type="PackedScene" uid="uid://c3nqhx8vsgm1r" path="res://escenas/Sonido.tscn" id="8_sonido"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_l3i6u"]
 sky_top_color = Color(0.32, 0.55, 0.9, 1)
@@ -30,9 +33,10 @@ bounce = 0.5
 
 [node name="Juego" type="Node3D" unique_id=1662410881]
 script = ExtResource("1_juego")
+mapas = [ExtResource("4_muelle"), ExtResource("5_cerro")]
 
-[node name="Golpe" type="Node3D" parent="." unique_id=880227739]
-script = ExtResource("2_golpe")
+[node name="Impulso" type="Node3D" parent="." unique_id=880227739]
+script = ExtResource("2_impulso")
 
 [node name="Camara" type="Camera3D" parent="." unique_id=1472793157]
 physics_interpolation_mode = 2
@@ -96,6 +100,22 @@ offset_right = 2.0
 offset_bottom = -72.0
 show_percentage = false
 
+[node name="Ayuda" type="Label" parent="UI" unique_id=1077121290]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -2.0
+offset_top = -116.0
+offset_right = 2.0
+offset_bottom = -96.0
+grow_horizontal = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.85)
+theme_override_constants/outline_size = 7
+theme_override_font_sizes/font_size = 24
+horizontal_alignment = 1
+
 [node name="Pegar" type="Button" parent="UI" unique_id=1771028777]
 custom_minimum_size = Vector2(190, 190)
 anchors_preset = 3
@@ -122,6 +142,8 @@ offset_bottom = 55.0
 focus_mode = 0
 text = "DROP +1"
 
+[node name="Pausa" parent="." instance=ExtResource("7_pausa")]
+
 [node name="Portada" type="CanvasLayer" parent="." unique_id=601856004]
 layer = 100
 
@@ -133,8 +155,12 @@ texture = ExtResource("3_47w8y")
 expand_mode = 1
 stretch_mode = 6
 
-[node name="Campo" parent="." unique_id=821126879 instance=ExtResource("4_4ru81")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -20.817749, -0.96032715, 2.3584595)
-
-[node name="Piche" parent="." unique_id=2077429810 instance=ExtResource("6_jv425")]
+[node name="Piche" type="RigidBody3D" parent="." unique_id=2077429810 instance=ExtResource("6_jv425")]
+mass = 0.0459
 physics_material_override = SubResource("PhysicsMaterial_cqm7f")
+freeze = true
+continuous_cd = true
+contact_monitor = true
+max_contacts_reported = 4
+
+[node name="Sonido" parent="." instance=ExtResource("8_sonido")]

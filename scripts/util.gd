@@ -1,12 +1,14 @@
 extends RefCounted
 class_name Util
-## Piezas compartidas: mallas provisionales y el modelo de vuelo de la bola.
+## Piezas compartidas: mallas provisionales y el modelo de vuelo de el piche.
 ##
 ## La aerodinamica vive aqui porque la usan dos sitios: juego.gd la aplica como
-## fuerza sobre el cuerpo rigido, y golpe.gd la integra para dibujar el arco.
+## fuerza sobre el cuerpo rigido, y impulso.gd la integra para dibujar el arco.
 ## Si estuviera duplicada, el arco acabaria mintiendo.
 
-# medidas reales de una bola de golf
+# La esfera de colision del piche. Es chica -4 cm- y toda la calibracion del
+# juego (velocidades, jaula, damp) esta hecha sobre ella: agrandarla es
+# retocar el juego entero, no un renglon. Ver AUDITORIA.md.
 const RADIO := 0.0213      # 42,67 mm de diametro
 const MASA := 0.0459       # 45,9 g
 const AREA := PI * RADIO * RADIO
@@ -18,8 +20,8 @@ const VIDA_GIRO := 5.0     # segundos en que se apaga el efecto
 const GRAVEDAD := 9.8
 
 
-## Fuerza del aire sobre la bola. Sin la sustentacion el alcance maximo caeria
-## en 45 grados y el juego premiaria el globo en vez del drive rasante.
+## Fuerza del aire sobre el piche. Sin la sustentacion el alcance maximo caeria
+## en 45 grados y el juego premiaria el globo en vez del impulso rasante.
 static func fuerza_aire(vel: Vector3, viento: Vector3, giro: float) -> Vector3:
 	var rel := vel - viento
 	var s := rel.length()
@@ -65,8 +67,8 @@ static func mat(c: Color, vertex_color := false) -> StandardMaterial3D:
 static func fisica() -> PhysicsMaterial:
 	var f := PhysicsMaterial.new()
 	f.friction = 1.0
-	# SBG vive del rebote: la bola pica en las paredes y llega al hoyo por donde
-	# no la esperabas. Con 0.35 se moria en el primer bote.
+	# El rebote es parte del movimiento: el piche pica en las paredes y llega
+	# por donde no lo esperabas. Con 0.35 se moria en el primer bote.
 	f.bounce = 0.5
 	return f
 

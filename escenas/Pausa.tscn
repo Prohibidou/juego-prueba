@@ -1,0 +1,75 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/pausa.gd" id="1_pausa"]
+[ext_resource type="Texture2D" path="res://ui/botones/pausa.png" id="2_icono"]
+[ext_resource type="Texture2D" path="res://ui/botones/reintentar.png" id="3_reintentar"]
+[ext_resource type="Texture2D" path="res://ui/botones/salir.png" id="4_salir"]
+
+[node name="Pausa" type="CanvasLayer"]
+process_mode = 3
+layer = 50
+script = ExtResource("1_pausa")
+
+[node name="Fondo" type="ColorRect" parent="."]
+visible = false
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.02, 0.02, 0.04, 0.66)
+
+[node name="Menu" type="VBoxContainer" parent="Fondo"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+alignment = 1
+theme_override_constants/separation = 16
+
+[node name="Titulo" type="TextureRect" parent="Fondo/Menu"]
+custom_minimum_size = Vector2(104, 100)
+layout_mode = 2
+size_flags_horizontal = 4
+texture = ExtResource("2_icono")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Rotulo" type="Label" parent="Fondo/Menu"]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 8
+theme_override_font_sizes/font_size = 42
+text = "PAUSA"
+
+[node name="Reintentar" type="TextureButton" parent="Fondo/Menu"]
+custom_minimum_size = Vector2(150, 140)
+layout_mode = 2
+size_flags_horizontal = 4
+texture_normal = ExtResource("3_reintentar")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Etiqueta" type="Label" parent="Fondo/Menu"]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 22
+text = "REINTENTAR"
+
+[node name="Salir" type="TextureButton" parent="Fondo/Menu"]
+custom_minimum_size = Vector2(400, 134)
+layout_mode = 2
+size_flags_horizontal = 4
+texture_normal = ExtResource("4_salir")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Ayuda" type="Label" parent="Fondo/Menu"]
+layout_mode = 2
+size_flags_horizontal = 4
+modulate = Color(1, 1, 1, 0.7)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 6
+theme_override_font_sizes/font_size = 20
+text = "Tab para seguir jugando"

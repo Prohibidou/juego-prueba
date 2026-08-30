@@ -1,138 +1,108 @@
-# Golfito — definición del juego
+# Piche: La Gran Fuga — diseño
 
-> Una vuelta de 4 hoyos, un bioma por hoyo. Menos golpes es mejor.
-> El terreno manda y la fauna te cuesta caro.
+> Un piche se escapó y quiere volver a su casa. Cada mapa se cruza a pie y a
+> saltos hasta llegar a la camioneta, que lo lleva al mapa siguiente.
 
-Documento de diseño cerrado. Si el código y este documento no coinciden, manda
-este documento.
+Este documento describe **el juego que se está haciendo**. Reemplaza al
+documento de diseño de golf, que describía otro juego (cuatro hoyos, par,
+putt, biomas) y ya no aplica a nada del código.
+
+Lo que todavía no está decidido va marcado como **abierto**. Lo pendiente de
+implementar, con su orden, está en [AUDITORIA.md](AUDITORIA.md).
 
 ---
 
 ## 1. El principio rector
 
-**Cada golpe tiene que ser una decisión.** Si apuntar a la bandera y pegar a
-tope es siempre lo correcto, no hay juego: hay una barra de potencia con
-paisaje. Todo lo que sigue existe para crear la duda *"¿voy a por ello o me
-quedo corto?"*.
+**Cruzar el mapa tiene que ser un problema, no una caminata.** Si caminar en
+línea recta hasta la camioneta siempre alcanza, no hay juego: hay un paseo con
+paisaje. Todo lo que se agregue tiene que responder a *"¿por dónde paso?"* o
+*"¿me alcanza para llegar?"*.
 
-De ahí salen las tres fuentes de riesgo:
+Hoy el juego no cumple esto: nada te puede detener y la stamina nunca se
+acaba. Es el hueco principal.
 
-1. **El golpe fuerte se paga en precisión** (dispersión).
-2. **La zona de caída de un drive completo duele** (búnker, lava, rough).
-3. **La fauna ocupa el buen camino** (manadas en la línea corta).
+## 2. El bucle
 
----
+1. El piche arranca **encerrado en una jaula**, en la cubierta de un barco.
+2. El primer impulso revienta la puerta — es la intro, en cámara lenta.
+3. Se cruza el mapa: caminando (lento, gratis) o a impulsos (rápido, cuesta
+   stamina), esquivando lo que haya en el medio y juntando basura para
+   recargar.
+4. Se llega a la **caja de la camioneta** y hay que quedarse ahí, posado: pasar
+   por arriba volando no cuenta.
+5. Cambio de mapa. Al último, el piche llegó a su casa y se termina.
 
-## 2. El swing
+## 3. Los verbos
 
-Apuntas (dirección + ángulo 5°–55°), cargas potencia y sueltas.
+| Verbo | Tecla | Qué hace |
+|---|---|---|
+| Girar | A / D, stick izq. eje X | Cambia la mira, que es el rumbo *y* el ángulo de cámara |
+| Caminar | W / S, stick izq. eje Y | Avanza en la mira. Tope 4,5 m/s. No cuesta nada |
+| Impulso | G, botón A | Carga una barra 2 s y sale disparado hasta 26 m/s. Cuesta stamina |
+| Salto | Espacio, botón X | Brinco corto, gratis, sin salir del modo de andar |
+| Timón | ← / →, arrastre | En el aire, corrige la línea. Presupuesto corto por impulso |
+| Destrabar | R | Reubica al piche a un par de metros. Sin coste |
 
-**Dispersión por potencia.** Cuanto más rápido sale la bola, más se abre un
-cono de desvío aleatorio, y **el cono se dibuja en el suelo mientras cargas**.
-No hay azar oculto: ves lo que arriesgas antes de soltar.
+El mando es **de tanque a propósito**: girar y avanzar son ejes distintos, así
+que moverse en línea recta nunca mueve la cámara y una pendiente no puede
+desviar el rumbo.
 
-- La dispersión escala con la **velocidad real de salida**, no con el
-  porcentaje de barra. Así un putt sale siempre exacto y solo el driver a tope
-  tiembla.
-- Golpe suave: línea exacta. Golpe a tope: hasta ~5° de desvío.
+**Cuanto más cargás el impulso, menos puntería tenés** (la dispersión va con el
+cuadrado de la fuerza). Sin eso, cargar a tope sería siempre lo correcto y la
+barra no sería una decisión.
 
-Sin selección de palos: potencia + ángulo cubren lo mismo con dos perillas en
-vez de un inventario.
+**Abierto:** ¿el piche *corre* o el piche *se catapulta*? Hoy caminar es
+cinemático (velocidad forzada por código, cuerpo congelado al soltar) y lo
+único que interactúa con el terreno es el impulso. De esa decisión depende si
+la stamina y el impulso quedan como están.
 
-## 3. El putt
+## 4. La stamina
 
-Se activa solo cuando la bola está dentro del green.
+Una barra. La gasta el impulso (60 de 100 a barra llena); la repone la basura
+tirada por el mapa (20 por pieza). Caminar es gratis.
 
-- Ángulo forzado a 0 (rasante), potencia máxima recortada, cámara más baja.
-- **El green tiene una caída suave, distinta en cada hoyo.** Para embocar de
-  lejos apuntas a un lado y dejas que la pendiente la meta.
-- La caída se comunica con una **flecha 3D apoyada en el césped apuntando
-  cuesta abajo**, más larga cuanto más fuerte es la pendiente. Una pendiente
-  suave no se ve en low-poly; pedir que la leas a ojo sería injusto.
+Es lo que obliga a desviarse de la línea recta: para poder saltar el hueco que
+viene hay que haber juntado antes.
 
-## 4. El campo y los cuatro hoyos
+**Abierto:** hoy no aprieta. Hay 16 piezas por mapa (320 de recarga) contra un
+tanque de 100, y caminar gratis siempre alcanza. O caminar cuesta algo, o el
+impulso es la única forma de pasar ciertos sitios.
 
-El campo mide 128×128 m y un drive máximo son 72 m. **No hace falta un campo
-más grande**: la longitud se fabrica con doglegs y con la diagonal, que da
-181 m de esquina a esquina.
+## 5. El mapa
 
-Un **dogleg** es una cresta: una loma alargada entre tee y hoyo. La sobrevuelas
-solo con un golpe alto y fuerte (el que más dispersión tiene) o la rodeas por
-seguro.
+Escenario real por fotogrametría, no terreno generado. Hoy: un muelle con un
+barco, galpones y grúas. La malla trae su propio relieve y sus obstáculos, así
+que el diseño de nivel es **dónde se pone la salida, dónde la camioneta y qué
+hay en el medio**, no esculpir terreno.
 
-| # | Bioma | Par | Trazado | Regla propia del bioma |
-|---|---|---|---|---|
-| 1 | Pradera | 3 | 75 m recto | Ninguna. Es el tutorial: un drive bueno llega al green |
-| 2 | Desierto | 4 | 130 m, dogleg derecha | **La arena no deja rodar**: todo es vuelo. Viento lateral constante. Búnker en la caída del atajo recto |
-| 3 | Nieve | 4 | 120 m | **El problema es pasarse**: la bola rueda eternamente, hay placas de hielo y el green está en una hondonada |
-| 4 | Volcán | 5 | 175 m, diagonal completa | Terreno quebrado y un **río de lava a los 90 m**: lo cruzas de un golpe (riesgo) o vas al paso estrecho (dos golpes seguros) |
+Del glb se leen dos cosas por nombre:
 
-**Par de la vuelta: 16.**
+- la malla `jaula` marca **dónde arranca** el piche (posición y giro tal cual
+  los dejó el artista; el marcador `Salida` de `escenas/mapas/Muelle.tscn` la sigue),
+- la malla `CAMIONETA` es **la meta**.
 
-Cada hoyo tiene una línea larga segura y una corta arriesgada. El hoyo 1 es la
-excepción deliberada: enseña a jugar, no pone trampas.
+Un mapa sin `CAMIONETA` no se puede terminar y avisa por consola.
 
-Un bioma que solo cambia la paleta es un fondo de pantalla. Por eso cada uno
-cambia **una regla** y obliga a un tipo de golpe distinto.
+**Abierto:** cuántos mapas y cuáles. Hoy hay uno.
 
-## 5. La fauna
+## 6. Lo que hay en el medio
 
-**Manadas en zonas fijas.** Pastan agrupadas en sitios concretos y se mueven
-poco. Las ves desde el tee y planificas: la línea corta pasa por la manada,
-rodearla cuesta distancia.
+- **Basura**: recarga stamina. Está sembrada por el camino de la salida a la
+  meta, hasta 22 m a los costados.
+- **Fauna**: animales que pastan y salen corriendo si el piche pasa rápido
+  cerca. Atropellarlos los deja **aturdidos, no muertos**: se levantan y se
+  van. No cuesta nada — el juego no va de lastimar bichos.
 
-El castigo siempre es culpa tuya, nunca mala suerte. Un bicho que se cruza
-mientras la bola vuela sería un impuesto aleatorio, y en un juego de precisión
-eso se siente injusto.
+**Abierto, y es el hueco grande:** no hay ninguna amenaza. Nada te puede
+atrapar, herir ni frenar; caerse del mapa te devuelve gratis al punto anterior.
+Un juego sobre escaparse necesita algo de lo que escaparse.
 
-Al recibir el pelotazo el animal queda **aturdido, no muerto**: estrellitas, se
-levanta y sale corriendo. Mismo castigo, misma lectura, y el juego deja de ir
-de matar bichos.
+## 7. Lo que NO es este juego
 
-## 6. Reglas y penalizaciones
-
-Marcador único: **golpes**. Todo se paga en la misma moneda.
-
-| Situación | Coste |
-|---|---|
-| Animal alcanzado | **+2 golpes** |
-| Lava o agua | **+1 golpe**, repites desde donde pegaste |
-| Drop voluntario (tecla R) | **+1 golpe**, junto a donde estabas |
-| Árbol | Sin penalización: ya te castiga comiéndose la velocidad y dejándote en mal sitio |
-| Fuera de límites | No existe. El perímetro rebota, con un seto visible para que no parezca un muro roto |
-
-**Nunca se pierde una bola.** Con dispersión, lava y manadas, el peor caso
-posible de cualquier desastre es un golpe. `R` no puede ser un rebobinado
-gratis: sin coste, ninguna mala posición tiene consecuencias.
-
-El **viento** es constante por hoyo, con flecha e intensidad en el HUD, y solo
-actúa en vuelo. Sin ráfagas: una ráfaga aleatoria es azar oculto, exactamente
-lo contrario del cono de dispersión, que sí se ve.
-
-Los **cráteres** son cosméticos: la cicatriz de un golpe que se fue largo.
-
-## 7. La partida
-
-Cuatro hoyos, de cinco a ocho minutos. Al terminar, tarjeta con el desglose
-hoyo a hoyo, el total contra par, y **la mejor vuelta guardada en disco**.
-
-Ese es todo el metajuego que necesita. Sin desbloqueos, sin monedas, sin
-carrera profesional.
-
-## 8. Lo que queda fuera
-
-Selección de palos, multijugador, personalización, campos infinitos, efecto
-lateral en la bola, modo carrera. Son juegos distintos y más grandes, y ninguno
-resuelve el problema del punto 1.
-
----
-
-## 9. Orden de construcción
-
-1. **Que sea golf.** Modo putt + caída del green con flecha, dispersión con
-   cono visible, calle/rough/búnker con rozamiento y color propios, animal +2,
-   `R` con coste, árbol como obstáculo.
-2. **El campo.** Los cuatro trazados con sus pares reales, doglegs por cresta,
-   manadas en zonas fijas, lava en el hoyo 4, viento por hoyo.
-3. **El cierre.** Tarjeta final, récord en disco, avisos de birdie/bogey,
-   cámara al embocar, sonido.
+- No es golf. No hay par, ni golpes, ni tarjeta, ni copa, ni bandera, ni
+  calle/rough/green. Se sacó todo en agosto de 2026.
+- No hay marcador. Terminar el mapa no da puntos: te lleva al siguiente.
+- No hay tienda, ni desbloqueos, ni monedas, ni multijugador.
+- No hay muerte por ahora. Si algún día la hay, el reintento arranca en el
+  mapa, no en la partida.
