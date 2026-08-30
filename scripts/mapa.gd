@@ -82,6 +82,15 @@ const INTENTOS_SIEMBRA := 6    # tiros de dado por pieza antes de rendirse
 ## nada que recoger y la stamina no se repone.
 @export_range(0, 80, 1) var basuras := 16
 
+## Multiplicador de la velocidad de salida del impulso (G), por mapa. La
+## distancia de un lanzamiento balistico va con el CUADRADO de la velocidad:
+## para que el impulso llegue N veces mas lejos hace falta multiplicar la
+## VELOCIDAD por raiz(N), no por N. Arranca en 1.0 -no cambia nada, el
+## Muelle-; se aplica en impulso.velocidad() y se mide con _alcance_impulso()
+## en juego.gd, que imprime el numero real (aerodinamica, timon y cuesta
+## incluidos) para calibrar este valor con datos, no a ojo.
+@export_range(1.0, 3.0, 0.001) var impulso_alcance := 1.0
+
 @export_group("Desprendimiento")
 ## Segundos entre piedra y piedra. En 0 no se desprende ninguna: un mapa sin
 ## cerro encima no tiene de donde tirarlas.

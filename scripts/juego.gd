@@ -1179,7 +1179,11 @@ func _tecla(codigo: Key, apretada: bool) -> void:
 ## que el numero dependa de donde este parado el piche. Es la medida que hay
 ## que mirar al tocar VEL_MAX o LOFT en impulso.gd.
 func _alcance_impulso(f := 1.0) -> float:
-	var rapidez: float = lerpf(impulso.VEL_MIN, impulso.VEL_MAX, pow(f, impulso.CURVA))
+	# el mismo escalado que impulso.velocidad(): con mapa.impulso_alcance != 1.0
+	# (el cerro) el numero que sale de aca YA es el alcance real, no el del
+	# muelle sin el multiplicador
+	var rapidez: float = lerpf(impulso.VEL_MIN, impulso.VEL_MAX, pow(f, impulso.CURVA)) \
+		* mapa.impulso_alcance
 	var v: Vector3 = impulso.direccion() * rapidez
 	var giro := clampf(v.normalized().y * 2.2, 0.25, 1.0)
 	var llano := func(_x: float, _z: float) -> float: return 0.0
@@ -1270,6 +1274,20 @@ func _check_mapa() -> void:
 				% [lejos, mapa.basura.size()])
 			assert(lejos > 0, "%s: la basura quedo amontonada en la salida" % mapa.name)
 			_check_rocas()
+			# El cerro triplica el ALCANCE del impulso via mapa.impulso_alcance
+			# (ver mapa.gd e impulso.gd), no la velocidad: la distancia va con
+			# el cuadrado de la velocidad. Se imprime el numero medido -con la
+			# aerodinamica, el timon y la cuesta de Util.trayectoria adentro,
+			# no solo la formula- para que se pueda calibrar el multiplicador
+			# contra un objetivo real en vez de a ojo. No hay tope fijo como en
+			# el muelle (esa vara es de sus plataformas, ver _self_check): el
+			# techo aca lo decide donde para la camioneta y donde caen las
+			# rocas, y eso lo mide el orquestador jugando, no un assert.
+			var alcance_cerro := _alcance_impulso()
+			print("cerro: impulso a tope llega a %.1f m (impulso_alcance=%.3f; en x1.0 seria ~%.1f m)"
+				% [alcance_cerro, mapa.impulso_alcance,
+				   alcance_cerro / mapa.impulso_alcance / mapa.impulso_alcance])
+			assert(alcance_cerro > 0.0, "%s: el impulso no llega a ningun lado" % mapa.name)
 		else:
 			# la meta es SUBIRSE a la camioneta: encima y posado cuenta; al
 			# lado, debajo, o pasandole por arriba a toda velocidad, no
@@ -1473,11 +1491,17 @@ func _self_check() -> void:
 	# hay que ir andando; por encima del segundo un solo impulso a tope se pasa
 	# las plataformas de largo, que es de lo que venimos.
 	var alcance := _alcance_impulso()
-	print("alcance del impulso: barra 1/4 %.1f m | 1/2 %.1f m | 3/4 %.1f m | llena %.1f m"
+	print("alcance del impulso: barra 1/4 %.1f m | 1/2 %.1f m | 3/4 %.1f m | llena %.1f m (mapa.impulso_alcance=%.3f)"
 		% [_alcance_impulso(0.25), _alcance_impulso(0.5),
-		   _alcance_impulso(0.75), alcance])
-	assert(alcance > 9.0, "el impulso a tope no cruza ni un hueco")
-	assert(alcance < 20.0, "el impulso a tope se pasa las plataformas de largo")
+		   _alcance_impulso(0.75), alcance, mapa.impulso_alcance])
+	# Los topes de 9-20 m son del MUELLE: ahi el salto tiene que cruzar un hueco
+	# entre plataformas y ninguna cosa mas (por debajo del primero no se cruza
+	# nada, por encima del segundo un impulso a tope se pasa las plataformas de
+	# largo). El cerro no tiene plataformas que medir con esta vara -su alcance
+	# se calibra en _check_mapa(), con mapa.impulso_alcance de por medio.
+	if not mapa.meta_se_mueve():
+		assert(alcance > 9.0, "el impulso a tope no cruza ni un hueco")
+		assert(alcance < 20.0, "el impulso a tope se pasa las plataformas de largo")
 
 	# el pause: Tab congela, Tab suelta, y reintentar rehace el mapa actual
 	# entero -por eso se comprueba que la jaula siga en pie despues, si el

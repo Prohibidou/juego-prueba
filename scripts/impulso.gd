@@ -101,7 +101,7 @@ var puede_saltar := true     # sin stamina no hay impulso; lo pone juego.gd
 var timon := 0.0             # -1..1 para dirigir en el aire; lo lee juego.gd
 var suelo: Callable          # (x, z) -> altura del terreno
 
-var mapa: Mapa   # solo para la lista "excluir" del rayo de camara: lo pone juego.gd
+var mapa: Mapa   # la lista "excluir" del rayo de camara y el impulso_alcance del mapa; lo pone juego.gd
 
 var _piche: RigidBody3D
 var _camara: Camera3D
@@ -134,8 +134,12 @@ func reset(salida: Vector3, meta: Vector3) -> void:
 	_cargando = false
 
 
+## Toda la escala (de VEL_MIN a VEL_MAX) se escala por mapa.impulso_alcance:
+## un impulso minimo tambien llega mas lejos en el cerro, no solo el de barra
+## llena. Sin mapa (self-check temprano) queda en 1.0, sin cambios.
 func velocidad() -> float:
-	return lerpf(VEL_MIN, VEL_MAX, pow(fuerza, CURVA))
+	var base := lerpf(VEL_MIN, VEL_MAX, pow(fuerza, CURVA))
+	return base * (mapa.impulso_alcance if mapa else 1.0)
 
 
 func cargar() -> void:
