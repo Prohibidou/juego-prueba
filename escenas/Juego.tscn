@@ -5,6 +5,7 @@
 [ext_resource type="Texture2D" uid="uid://4fgg535aj87s" path="res://ui/portada.png" id="3_47w8y"]
 [ext_resource type="PackedScene" uid="uid://i61txw5smhdd" path="res://escenas/Campo.tscn" id="4_4ru81"]
 [ext_resource type="PackedScene" uid="uid://nv4bpr3ue734" path="res://escenas/Piche.tscn" id="6_jv425"]
+[ext_resource type="AudioStream" uid="uid://b8jrossci1361" path="res://audio/sonido_fondo.mp3" id="7_musica"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_l3i6u"]
 sky_top_color = Color(0.32, 0.55, 0.9, 1)
@@ -30,6 +31,12 @@ bounce = 0.5
 
 [node name="Juego" type="Node3D" unique_id=1662410881]
 script = ExtResource("1_juego")
+
+[node name="Musica" type="AudioStreamPlayer" parent="." unique_id=1090873541]
+stream = ExtResource("7_musica")
+volume_db = -12.0
+autoplay = true
+bus = &"Master"
 
 [node name="Golpe" type="Node3D" parent="." unique_id=880227739]
 script = ExtResource("2_golpe")
@@ -72,28 +79,32 @@ horizontal_alignment = 1
 
 [node name="Barra" type="ProgressBar" parent="UI" unique_id=520441117]
 custom_minimum_size = Vector2(320, 22)
-anchors_preset = 7
-anchor_left = 0.5
+anchors_preset = 3
+anchor_left = 1.0
 anchor_top = 1.0
-anchor_right = 0.5
+anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -2.0
-offset_top = -44.0
-offset_right = 2.0
-offset_bottom = -40.0
+offset_left = -344.0
+offset_top = -46.0
+offset_right = -24.0
+offset_bottom = -24.0
+grow_horizontal = 0
+grow_vertical = 0
 show_percentage = false
 
 [node name="BarraStam" type="ProgressBar" parent="UI" unique_id=1542535771]
 custom_minimum_size = Vector2(320, 14)
-anchors_preset = 7
-anchor_left = 0.5
+anchors_preset = 3
+anchor_left = 1.0
 anchor_top = 1.0
-anchor_right = 0.5
+anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -2.0
-offset_top = -76.0
-offset_right = 2.0
-offset_bottom = -72.0
+offset_left = -344.0
+offset_top = -68.0
+offset_right = -24.0
+offset_bottom = -54.0
+grow_horizontal = 0
+grow_vertical = 0
 show_percentage = false
 
 [node name="Pegar" type="Button" parent="UI" unique_id=1771028777]

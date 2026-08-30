@@ -74,8 +74,6 @@ const APUNTA_GIRO := 1.6       # rad/s de mira con el stick derecho al tope
 const GIRO_ANDAR := 2.2        # rad/s de mira con A/D o el stick izquierdo
 # -------------
 
-const LARGO_MIRA := 60.0    # metros de linea de apuntado
-const PASOS_MIRA := 30
 
 var mira := 0.0
 var fuerza := 0.0
@@ -88,13 +86,11 @@ var cine := false            # plano de cine: manda sobre todo lo demas
 var cine_offset := Vector3.ZERO   # desde donde se mira, RELATIVO a la bola
 var puede_saltar := true     # sin stamina no hay impulso; lo pone juego.gd
 var timon := 0.0             # -1..1 para dirigir en el aire; lo lee juego.gd
-var suelo: Callable          # (x, z) -> altura del terreno
 
 var campo: Campo   # solo para la lista "excluir" del rayo de camara: lo pone juego.gd
 
 var _bola: RigidBody3D
 var _camara: Camera3D
-var _linea: MeshInstance3D
 var _cargando := false
 var _dir_camara := Vector3.FORWARD
 var _mirada := Vector3.ZERO   # punto al que mira la camara, suavizado igual que la posicion
@@ -105,14 +101,6 @@ func preparar(bola: RigidBody3D, camara: Camera3D) -> void:
 	_bola = bola
 	_camara = camara
 
-	_linea = MeshInstance3D.new()
-	_linea.mesh = ImmediateMesh.new()
-	var m := Util.mat(Color(1, 0.95, 0.3, 0.9))
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_linea.material_override = m
-	_linea.top_level = true
-	add_child(_linea)
 
 
 ## Al llegar a un hoyo se apunta a la bandera, que es lo que haria cualquiera.
@@ -192,7 +180,6 @@ func _process(dt: float) -> void:
 		Input.get_axis("ui_left", "ui_right") + _timon_tactil, -1.0, 1.0)
 
 	_mover_camara(dt)
-	_dibujar_mira()
 
 
 ## Stick con zona muerta. ponytail: mando 0, el primero que haya conectado;
@@ -229,24 +216,6 @@ func _dir(m: float, l: float) -> Vector3:
 ## Radianes de error que puede salir este golpe, para el HUD y para soltar().
 func dispersion() -> float:
 	return DISPERSA * fuerza * fuerza / maxf(estabilidad, 0.1)
-
-
-## Solo se marca HACIA DONDE se apunta, no donde va a caer: adivinar la caida
-## le quita al juego la parte de calcular la fuerza.
-func _dibujar_mira() -> void:
-	var im: ImmediateMesh = _linea.mesh
-	im.clear_surfaces()
-	_linea.visible = activo
-	if not activo or not suelo.is_valid():
-		return
-	var dir := Vector3(sin(mira), 0, cos(mira))
-	var p := _bola.global_position
-	im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
-	for i in PASOS_MIRA + 1:
-		var q := p + dir * (LARGO_MIRA * i / PASOS_MIRA)
-		q.y = suelo.call(q.x, q.z) + 0.08
-		im.surface_add_vertex(q)
-	im.surface_end()
 
 
 ## Gira `actual` hacia `objetivo` (vectores planos, XZ) como mucho `max_rad`

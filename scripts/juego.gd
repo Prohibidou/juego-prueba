@@ -166,7 +166,6 @@ func _ready() -> void:
 	await campo.preparar()
 	msg.text = ""
 
-	golpe.suelo = Callable(campo, "altura_terreno")
 	_ir_a_hoyo(0)
 	listo = true
 	await _self_check()
@@ -775,12 +774,12 @@ func _embocar() -> void:
 	# SBG puntua en vez de contar golpes: terminar vale, ahorrar golpes vale mas
 	var puntos := maxi(0, PUNTOS_HOYO - d * PUNTOS_GOLPE)
 	total += puntos
-	msg.text = "%s  +%d" % [
-		"Birdie!" if d < 0 else ("Par" if d == 0 else "+%d" % d), puntos]
-	# tambien en tiempo real: si se emboca con la camara lenta puesta, el cartel
-	# del resultado se estiraba igual que los avisos
+	# El cartel de resultado ("Birdie! +100") ya no se canta en pantalla. Los
+	# puntos se siguen sumando y la tarjeta se sigue llevando; solo deja de
+	# mostrarse. La espera SI queda: es el respiro entre llegar a la camioneta
+	# y que se recoloque todo, no el tiempo de leer el cartel. Va en tiempo
+	# REAL porque si se llega con la camara lenta puesta se estiraba.
 	await get_tree().create_timer(1.8, true, false, true).timeout
-	msg.text = ""
 	golpes = 0
 	indice += 1
 	if indice >= Campo.HOYOS.size():
