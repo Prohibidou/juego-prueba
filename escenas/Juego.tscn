@@ -77,28 +77,32 @@ horizontal_alignment = 1
 
 [node name="Barra" type="ProgressBar" parent="UI" unique_id=520441117]
 custom_minimum_size = Vector2(320, 22)
-anchors_preset = 7
-anchor_left = 0.5
+anchors_preset = 3
+anchor_left = 1.0
 anchor_top = 1.0
-anchor_right = 0.5
+anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -2.0
-offset_top = -44.0
-offset_right = 2.0
-offset_bottom = -40.0
+offset_left = -344.0
+offset_top = -46.0
+offset_right = -24.0
+offset_bottom = -24.0
+grow_horizontal = 0
+grow_vertical = 0
 show_percentage = false
 
 [node name="BarraStam" type="ProgressBar" parent="UI" unique_id=1542535771]
 custom_minimum_size = Vector2(320, 14)
-anchors_preset = 7
-anchor_left = 0.5
+anchors_preset = 3
+anchor_left = 1.0
 anchor_top = 1.0
-anchor_right = 0.5
+anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = -2.0
-offset_top = -76.0
-offset_right = 2.0
-offset_bottom = -72.0
+offset_left = -344.0
+offset_top = -68.0
+offset_right = -24.0
+offset_bottom = -54.0
+grow_horizontal = 0
+grow_vertical = 0
 show_percentage = false
 
 [node name="Ayuda" type="Label" parent="UI" unique_id=1077121290]

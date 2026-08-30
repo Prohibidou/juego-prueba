@@ -377,7 +377,6 @@ func _cargar_mapa(i: int) -> void:
 	mapa.excluir = [piche.get_rid()]
 	impulso.mapa = mapa   # para que el rayo de colision de la camara no pise la jaula
 	await mapa.preparar()
-	impulso.suelo = Callable(mapa, "altura_terreno")
 
 	_ir_a_nivel()
 	_check_mapa()
