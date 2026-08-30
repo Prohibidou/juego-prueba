@@ -19,7 +19,6 @@ const FOTO_AEREA := false
 # sueltas (latas, cajas, ladrillos) repartidas sobre un plano. Se usan de
 # molde, se duplican y se siembran por el camino de la salida a la meta.
 const BASURA := "res://modelos/trash_and_debris.glb"
-const BASURAS := 16            # piezas por nivel
 # Un cuarto de los moldes del escaparate son laminas de espesor casi cero
 # (papeles, calcos, latas pisadas): a ras del piso hacen z-fighting con el
 # suelo (el flickering del playtest). Solo se siembran piezas con volumen.
@@ -78,6 +77,11 @@ const INTENTOS_SIEMBRA := 6    # tiros de dado por pieza antes de rendirse
 # es donde se ve el mapa al que pertenece; antes vivia en una tabla paralela.
 @export var viento := Vector3(1.0, 0, -0.5)
 
+## Piezas de basura que se siembran por el camino. Un mapa de persecucion, con
+## su ruta larga, necesita mas que uno corto: si no, se anda medio cerro sin
+## nada que recoger y la stamina no se repone.
+@export_range(0, 80, 1) var basuras := 16
+
 @export_group("Desprendimiento")
 ## Segundos entre piedra y piedra. En 0 no se desprende ninguna: un mapa sin
 ## cerro encima no tiene de donde tirarlas.
@@ -91,8 +95,18 @@ const INTENTOS_SIEMBRA := 6    # tiros de dado por pieza antes de rendirse
 @export_range(0.0, 60.0, 1.0) var roca_dispersa := 18.0
 ## Empujon inicial ladera abajo. Sin el se quedan quietas en una cima plana.
 @export_range(0.0, 20.0, 0.5) var roca_empuje := 4.0
-## A cuantos metros por debajo del punto de suelta se dan por perdidas.
-@export_range(10.0, 400.0, 5.0) var roca_muere := 90.0
+## Cuanto por delante del piche, ruta adelante, cae la piedra. Tiene que verla
+## venir: cayendo encima no se esquiva, y cayendo detras no estorba.
+@export_range(10.0, 200.0, 5.0) var roca_adelante := 60.0
+## Cuanto ladera ARRIBA de la ruta se suelta. De ahi baja rodando y la cruza:
+## soltarla sobre el camino mismo se ve como un truco.
+@export_range(5.0, 120.0, 5.0) var roca_ladera := 30.0
+## A que distancia del piche se borra. Una piedra que ya paso, o que se fue
+## ladera abajo, es un cuerpo rigido gastando fisica para nadie.
+@export_range(20.0, 400.0, 10.0) var roca_lejos := 140.0
+## Y cuanto vive como mucho, aunque quede cerca: la que se encaja entre dos
+## arboles al lado del camino no se iria nunca.
+@export_range(3.0, 120.0, 1.0) var roca_vida := 25.0
 
 var excluir: Array[RID] = []   # el piche, para que no la pisen los rayos
 var _rids_mar: Array[RID] = []   # los cuerpos del agua: ahi no se siembra
@@ -452,7 +466,14 @@ func _altura_sembrable(x: float, z: float) -> float:
 	if g.is_empty():
 		return NAN
 	var y: float = g["position"].y
-	if y < minf(_salida.y, _punto_meta.y) - HUNDIDO or y < NIVEL_PERDIDO + 0.1:
+	# El corte por hundimiento es cosa del muelle: alli el camino cruza el
+	# costado del barco y hay huecos del casco por los que la siembra se cuela
+	# al mar. Un mapa de persecucion BAJA un cerro entero, asi que medir contra
+	# la altura de la salida daba por hundida toda la mitad de abajo de la ruta
+	# -treinta y pico metros de desnivel- y esa mitad se quedaba sin basura.
+	if not _camioneta and y < minf(_salida.y, _punto_meta.y) - HUNDIDO:
+		return NAN
+	if y < NIVEL_PERDIDO + 0.1:
 		return NAN
 	if _rids_mar.has(g["rid"]):
 		return NAN
@@ -525,12 +546,23 @@ func damp_suelo() -> float:
 
 # ---------------------------------------------------------------------------
 
+## Un punto del camino que hay que recorrer, con `f` de 0 a 1: el recorrido de
+## la camioneta si el mapa la trae -es por donde se va a pasar de verdad-, y la
+## recta salida-meta si la meta esta quieta. Solo x y z: la altura la pone quien
+## siembre, con un rayo.
+func _punto_camino(f: float) -> Vector2:
+	if _camioneta:
+		var p := _camioneta.punto_ruta(f * _camioneta.largo())
+		return Vector2(p.x, p.z)
+	return Vector2(_salida.x, _salida.z).lerp(Vector2(_punto_meta.x, _punto_meta.z), f)
+
+
 func _poblar_fauna() -> void:
 	for a in animales:
 		if is_instance_valid(a["nodo"]):
 			a["nodo"].queue_free()
 	animales.clear()
-	var medio := (Vector2(_salida.x, _salida.z) + Vector2(_punto_meta.x, _punto_meta.z)) * 0.5
+	var medio := _punto_camino(0.5)
 	for n in 6:
 		# se tira el dado varias veces: medio radio de estos 60 m cae fuera del
 		# barco o sobre un hueco del casco, y ahi el bicho salia nadando en el
@@ -565,9 +597,7 @@ func _poblar_basura() -> void:
 	basura.clear()
 	if _moldes.is_empty():
 		return
-	var a := Vector2(_salida.x, _salida.z)
-	var b := Vector2(_punto_meta.x, _punto_meta.z)
-	for i in BASURAS:
+	for i in basuras:
 		# el camino cruza el costado del barco: hay tramos que caen al agua y
 		# huecos del casco por los que el rayo se cuela hasta la bodega. Se
 		# vuelve a tirar el dado unas cuantas veces y, si no sale sitio firme,
@@ -575,7 +605,7 @@ func _poblar_basura() -> void:
 		var p := Vector2.ZERO
 		var y := NAN
 		for intento in INTENTOS_SIEMBRA:
-			p = a.lerp(b, randf_range(0.08, 0.95)) \
+			p = _punto_camino(randf_range(0.08, 0.95)) \
 				+ Vector2.from_angle(randf() * TAU) * randf_range(2.0, RADIO_BASURA)
 			y = _altura_sembrable(p.x, p.y)
 			if not is_nan(y):
@@ -594,36 +624,50 @@ func _poblar_basura() -> void:
 		pieza.rotation.y = randf() * TAU
 		add_child(pieza)
 		basura.append(pieza)
-	print("basura sembrada: %d de %d" % [basura.size(), BASURAS])
+	print("basura sembrada: %d de %d" % [basura.size(), basuras])
 
 
 # ---------------------------------------------------------------------------
 # El desprendimiento: piedras que se sueltan en la cima y bajan rodando.
 # ---------------------------------------------------------------------------
 
-## Suelta una piedra cada `rocas_cada` segundos desde el marcador `Rocas`, si
-## el mapa lo trae. Las sueltas SE HACEN EN LA CIMA y bajan por fisica: nacer
-## a mitad de ladera se ve como un truco.
+## Suelta una piedra cada `rocas_cada` segundos SOBRE LA RUTA de la camioneta,
+## por delante de `lejos_de` -el piche-, que es a quien hay que estorbarle. Sin
+## camioneta cae desde el marcador `Rocas`, si el mapa lo trae. La suelta se
+## hace ladera arriba y la piedra baja por fisica: nacer sobre el camino mismo
+## se ve como un truco.
 func rodar_rocas(dt: float, lejos_de := Vector3.INF) -> void:
-	var cima := get_node_or_null("Rocas") as Node3D
-	if rocas_cada <= 0.0 or cima == null:
+	if rocas_cada <= 0.0:
 		return
-	for i in range(rocas.size() - 1, -1, -1):
-		var r: Roca = rocas[i]
-		if not is_instance_valid(r):
-			rocas.remove_at(i)
-		elif r.global_position.y < cima.global_position.y - roca_muere:
-			r.queue_free()          # se fue por la ladera, ya no molesta
-			rocas.remove_at(i)
+	_limpiar_rocas(lejos_de)
 	_t_roca -= dt
 	if _t_roca > 0.0:
 		return
 	_t_roca = rocas_cada
-	_soltar_roca(cima, lejos_de)
+	_soltar_roca(lejos_de)
 
 
-func _soltar_roca(cima: Node3D, lejos_de: Vector3) -> void:
-	var p := cima.global_position + Vector3(
+## Borra las que ya no le importan a nadie: las que quedaron lejos del piche
+## -las que ya paso y las que se fueron ladera abajo- y las que llevan
+## demasiado tiempo rodando. Sin esto la cuenta de cuerpos rigidos solo sube.
+func _limpiar_rocas(lejos_de: Vector3) -> void:
+	for i in range(rocas.size() - 1, -1, -1):
+		var r: Roca = rocas[i]
+		if not is_instance_valid(r):
+			rocas.remove_at(i)
+			continue
+		var lejos: bool = not is_inf(lejos_de.x) 			and r.global_position.distance_to(lejos_de) > roca_lejos
+		if lejos or r.vieja(roca_vida):
+			r.queue_free()
+			rocas.remove_at(i)
+
+
+func _soltar_roca(lejos_de: Vector3) -> void:
+	var blanco := _blanco_roca(lejos_de)
+	if is_inf(blanco.x):
+		return                       # este mapa no tiene de donde tirarlas
+	# ladera arriba del sitio que tiene que cruzar, para que llegue rodando
+	var p := blanco - _cuesta_abajo(blanco.x, blanco.z) * roca_ladera + Vector3(
 		randf_range(-roca_dispersa, roca_dispersa), 0.0,
 		randf_range(-roca_dispersa, roca_dispersa))
 	# Nunca encima del piche: aparecer dentro de el es una muerte que no se
@@ -640,6 +684,18 @@ func _soltar_roca(cima: Node3D, lejos_de: Vector3) -> void:
 	# el empujon la manda ladera abajo: se mira donde baja el terreno alrededor
 	roca.linear_velocity = _cuesta_abajo(p.x, p.z) * roca_empuje
 	rocas.append(roca)
+
+
+## Por donde tiene que pasar la piedra: la ruta de la camioneta, por delante de
+## quien la persigue. Sin camioneta, la cima del marcador `Rocas`; sin marcador,
+## INF y no se suelta ninguna.
+func _blanco_roca(lejos_de: Vector3) -> Vector3:
+	if _camioneta and not is_inf(lejos_de.x):
+		var d := _camioneta.avance(lejos_de) + randf_range(roca_adelante * 0.5, roca_adelante)
+		var p := _camioneta.punto_ruta(d)
+		return Vector3(p.x, altura_terreno(p.x, p.z), p.z)
+	var cima := get_node_or_null("Rocas") as Node3D
+	return cima.global_position if cima else Vector3.INF
 
 
 ## Hacia donde baja el terreno en este punto, en horizontal. Se sondea en cruz
