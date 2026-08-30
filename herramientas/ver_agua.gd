@@ -6,12 +6,12 @@ extends SceneTree
 
 
 func _init() -> void:
-	var campo := (load("res://escenas/Campo.tscn") as PackedScene).instantiate()
-	var curso: Node3D = campo.get_node("Curso")
+	var mapa := (load("res://escenas/mapas/Muelle.tscn") as PackedScene).instantiate()
+	var escenario: Node3D = mapa.get_node("Escenario")
 	var filas: Array = []
-	for m: MeshInstance3D in curso.find_children("*", "MeshInstance3D", true, false):
+	for m: MeshInstance3D in escenario.find_children("*", "MeshInstance3D", true, false):
 		var caja: AABB = m.get_aabb()
-		var t := m.global_transform if m.is_inside_tree() else _hasta_raiz(m, curso)
+		var t := m.global_transform if m.is_inside_tree() else _hasta_raiz(m, escenario)
 		var mundo := t * caja
 		filas.append({
 			"nombre": m.name,
@@ -19,12 +19,12 @@ func _init() -> void:
 			"ancho": maxf(mundo.size.x, mundo.size.z),
 		})
 	filas.sort_custom(func(a, b): return a["ancho"] > b["ancho"])
-	print("--- mallas del mapa, de mas ancha a menos (y en ejes de Campo) ---")
+	print("--- mallas del mapa, de mas ancha a menos (y en ejes de Muelle) ---")
 	for f in filas.slice(0, 22):
 		print("  %-34s y %8.2f .. %8.2f   ancho %8.1f"
 			% [f["nombre"], f["y0"], f["y1"], f["ancho"]])
-	print("(el nodo Curso esta desplazado a y=%.2f en Campo.tscn)"
-		% curso.position.y)
+	print("(el nodo Escenario esta desplazado a y=%.2f en Muelle.tscn)"
+		% escenario.position.y)
 	quit()
 
 

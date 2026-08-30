@@ -31,7 +31,7 @@ const BUS_AMBIENTE := "Ambiente"
 ## El giro en el aire suena en bucle mientras el piche vuela, mas fuerte y mas
 ## agudo cuanto mas rapido va. Por debajo de VUELO_MIN no suena nada.
 @export_range(0.0, 40.0, 0.5) var VUELO_MIN := 6.0     # m/s
-@export_range(1.0, 60.0, 0.5) var VUELO_MAX := 26.0    # va con VEL_MAX de golpe.gd
+@export_range(1.0, 60.0, 0.5) var VUELO_MAX := 26.0    # va con VEL_MAX de impulso.gd
 @export_range(-60.0, 0.0, 0.5) var VUELO_DB_MIN := -26.0
 @export_range(-30.0, 12.0, 0.5) var VUELO_DB_MAX := 0.0
 @export_range(0.2, 2.0, 0.01) var VUELO_TONO_MIN := 0.82

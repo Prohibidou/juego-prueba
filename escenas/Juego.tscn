@@ -1,10 +1,10 @@
 [gd_scene format=3 uid="uid://dyqheyjdjknog"]
 
 [ext_resource type="Script" uid="uid://c5lun48aur4vd" path="res://scripts/juego.gd" id="1_juego"]
-[ext_resource type="Script" uid="uid://twum5knlwid8" path="res://scripts/golpe.gd" id="2_golpe"]
+[ext_resource type="Script" uid="uid://twum5knlwid8" path="res://scripts/impulso.gd" id="2_impulso"]
 [ext_resource type="Texture2D" uid="uid://4fgg535aj87s" path="res://ui/portada.png" id="3_47w8y"]
-[ext_resource type="PackedScene" uid="uid://i61txw5smhdd" path="res://escenas/Campo.tscn" id="4_4ru81"]
-[ext_resource type="Script" uid="uid://dljmkirv0dom7" path="res://scripts/campo.gd" id="5_nv0ic"]
+[ext_resource type="PackedScene" uid="uid://i61txw5smhdd" path="res://escenas/mapas/Muelle.tscn" id="4_muelle"]
+[ext_resource type="PackedScene" uid="uid://b2cerromapa2xy" path="res://escenas/mapas/Cerro.tscn" id="5_cerro"]
 [ext_resource type="PackedScene" uid="uid://nv4bpr3ue734" path="res://escenas/Piche.tscn" id="6_jv425"]
 [ext_resource type="PackedScene" uid="uid://c3nqhx8vsgm1r" path="res://escenas/Sonido.tscn" id="7_sonido"]
 
@@ -32,9 +32,10 @@ bounce = 0.5
 
 [node name="Juego" type="Node3D" unique_id=1662410881]
 script = ExtResource("1_juego")
+mapas = [ExtResource("4_muelle"), ExtResource("5_cerro")]
 
-[node name="Golpe" type="Node3D" parent="." unique_id=880227739]
-script = ExtResource("2_golpe")
+[node name="Impulso" type="Node3D" parent="." unique_id=880227739]
+script = ExtResource("2_impulso")
 
 [node name="Camara" type="Camera3D" parent="." unique_id=1472793157]
 fov = 62.0
@@ -132,9 +133,6 @@ anchor_bottom = 1.0
 texture = ExtResource("3_47w8y")
 expand_mode = 1
 stretch_mode = 6
-
-[node name="Campo" type="Node3D" parent="." unique_id=821126879 instance=ExtResource("4_4ru81")]
-script = ExtResource("5_nv0ic")
 
 [node name="Piche" type="RigidBody3D" parent="." unique_id=2077429810 instance=ExtResource("6_jv425")]
 mass = 0.0459

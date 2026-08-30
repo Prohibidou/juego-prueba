@@ -1,14 +1,16 @@
 extends Control
 ## Pantalla de inicio, y escena principal del proyecto. Abre al instante porque
 ## no carga nada pesado; JUGAR pasa al juego, que ya se tapa a si mismo con la
-## portada mientras monta el campo.
+## portada mientras monta el mapa.
 
 const JUEGO := "res://escenas/Juego.tscn"
+const TIENDA := "res://escenas/Tienda.tscn"
 
 ## Lo que se espera desde el clic hasta cambiar de escena. Cambiar de escena
-## libera esta -el nodo de sonido incluido-, asi que sin esta pausa JUGAR era
-## el unico boton mudo de los tres: sonaba un fotograma y se cortaba. Es corto
-## a proposito; de aqui para arriba se empieza a notar como boton que no responde.
+## libera esta -el nodo de sonido incluido-, asi que sin esta pausa JUGAR y
+## TIENDA sonaban un fotograma y se cortaban; AJUSTES, que no cambia de
+## escena, no la necesita. Es corto a proposito; de aqui para arriba se
+## empieza a notar como boton que no responde.
 @export_range(0.0, 0.6, 0.01) var ESPERA_CLIC := 0.18
 
 
@@ -19,8 +21,8 @@ var _yendo := false          # ya se apreto JUGAR: no encolar otro cambio de esc
 func _ready() -> void:
 	sonido.musica(true)
 	sonido.ambiente(true)
-	$Botones/Jugar.pressed.connect(_jugar)
-	$Botones/Tienda.pressed.connect(func(): _pendiente("La tienda todavia no"))
+	$Botones/Jugar.pressed.connect(_ir.bind(JUEGO))
+	$Botones/Tienda.pressed.connect(_ir.bind(TIENDA))
 	$Botones/Ajustes.pressed.connect(func(): _pendiente("Los ajustes todavia no"))
 
 	for b in $Botones.get_children():
@@ -39,13 +41,14 @@ func _ready() -> void:
 
 
 ## Deja sonar el clic y recien ahi cambia de escena; ver ESPERA_CLIC. El pestillo
-## es para que aporrear el boton no encole dos cambios de escena.
-func _jugar() -> void:
+## es para que aporrear el boton no encole dos cambios de escena. Sirve para
+## JUGAR y para TIENDA: los dos salen de esta pantalla y se llevan el sonido.
+func _ir(escena: String) -> void:
 	if _yendo:
 		return
 	_yendo = true
 	await get_tree().create_timer(ESPERA_CLIC).timeout
-	get_tree().change_scene_to_file(JUEGO)
+	get_tree().change_scene_to_file(escena)
 
 
 func _realzar(boton: TextureButton, encima: bool) -> void:

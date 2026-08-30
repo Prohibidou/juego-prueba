@@ -1,0 +1,154 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="Script" path="res://scripts/tienda.gd" id="1_tienda"]
+[ext_resource type="Texture2D" path="res://ui/fondo_tienda.png" id="2_fondo"]
+[ext_resource type="Texture2D" path="res://ui/skins_lamina.png" id="3_lamina"]
+
+[sub_resource type="AtlasTexture" id="A_arana"]
+atlas = ExtResource("3_lamina")
+region = Rect2(0, 0, 384, 512)
+
+[sub_resource type="AtlasTexture" id="A_panda"]
+atlas = ExtResource("3_lamina")
+region = Rect2(384, 0, 384, 512)
+
+[sub_resource type="AtlasTexture" id="A_arcoiris"]
+atlas = ExtResource("3_lamina")
+region = Rect2(768, 0, 384, 512)
+
+[sub_resource type="AtlasTexture" id="A_rey"]
+atlas = ExtResource("3_lamina")
+region = Rect2(1152, 0, 384, 512)
+
+[sub_resource type="AtlasTexture" id="A_camuflaje"]
+atlas = ExtResource("3_lamina")
+region = Rect2(0, 512, 384, 512)
+
+[sub_resource type="AtlasTexture" id="A_hielo"]
+atlas = ExtResource("3_lamina")
+region = Rect2(384, 512, 384, 512)
+
+[sub_resource type="AtlasTexture" id="A_lava"]
+atlas = ExtResource("3_lamina")
+region = Rect2(768, 512, 384, 512)
+
+[sub_resource type="AtlasTexture" id="A_galaxia"]
+atlas = ExtResource("3_lamina")
+region = Rect2(1152, 512, 384, 512)
+
+[sub_resource type="StyleBoxEmpty" id="S_plano"]
+
+[node name="Tienda" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("1_tienda")
+
+[node name="Fondo" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = ExtResource("2_fondo")
+expand_mode = 1
+stretch_mode = 6
+
+[node name="Tablero" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.051
+anchor_top = 0.096
+anchor_right = 0.479
+anchor_bottom = 0.795
+
+[node name="Rejilla" type="GridContainer" parent="Tablero"]
+layout_mode = 2
+theme_override_constants/h_separation = 10
+theme_override_constants/v_separation = 10
+columns = 4
+
+[node name="Arana" type="TextureButton" parent="Tablero/Rejilla"]
+custom_minimum_size = Vector2(128, 170)
+layout_mode = 2
+texture_normal = SubResource("A_arana")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Panda" type="TextureButton" parent="Tablero/Rejilla"]
+custom_minimum_size = Vector2(128, 170)
+layout_mode = 2
+texture_normal = SubResource("A_panda")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Arcoiris" type="TextureButton" parent="Tablero/Rejilla"]
+custom_minimum_size = Vector2(128, 170)
+layout_mode = 2
+texture_normal = SubResource("A_arcoiris")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Rey" type="TextureButton" parent="Tablero/Rejilla"]
+custom_minimum_size = Vector2(128, 170)
+layout_mode = 2
+texture_normal = SubResource("A_rey")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Camuflaje" type="TextureButton" parent="Tablero/Rejilla"]
+custom_minimum_size = Vector2(128, 170)
+layout_mode = 2
+texture_normal = SubResource("A_camuflaje")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Hielo" type="TextureButton" parent="Tablero/Rejilla"]
+custom_minimum_size = Vector2(128, 170)
+layout_mode = 2
+texture_normal = SubResource("A_hielo")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Lava" type="TextureButton" parent="Tablero/Rejilla"]
+custom_minimum_size = Vector2(128, 170)
+layout_mode = 2
+texture_normal = SubResource("A_lava")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Galaxia" type="TextureButton" parent="Tablero/Rejilla"]
+custom_minimum_size = Vector2(128, 170)
+layout_mode = 2
+texture_normal = SubResource("A_galaxia")
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="Aviso" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.051
+anchor_top = 0.8
+anchor_right = 0.479
+anchor_bottom = 0.86
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 26
+modulate = Color(1, 1, 1, 0)
+
+[node name="Volver" type="Button" parent="."]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.051
+anchor_top = 0.88
+anchor_right = 0.2
+anchor_bottom = 0.96
+theme_override_colors/font_color = Color(0.98, 0.92, 0.78, 1)
+theme_override_colors/font_hover_color = Color(1, 0.98, 0.88, 1)
+theme_override_colors/font_outline_color = Color(0.12, 0.07, 0.03, 1)
+theme_override_constants/outline_size = 8
+theme_override_font_sizes/font_size = 34
+theme_override_styles/normal = SubResource("S_plano")
+theme_override_styles/hover = SubResource("S_plano")
+theme_override_styles/pressed = SubResource("S_plano")
+theme_override_styles/focus = SubResource("S_plano")
+text = "Volver"

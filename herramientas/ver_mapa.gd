@@ -1,9 +1,9 @@
 extends Node3D
-## Renderiza el campo desde arriba para poder situar tees y banderas.
+## Renderiza el mapa desde arriba para poder situar la salida y la meta.
 ##   godot --path . res://herramientas/VerMapa.tscn
 ## Deja user://mapa.png y un plano de coordenadas en user://mapa.log
 
-const CURSO := "res://resources-3d/PGJ_MAPA_MUELLE_v1.glb"
+const ESCENARIO := "res://resources-3d/PGJ_MAPA_MUELLE_v1.glb"
 const ESCALA := 1.0     # este ya viene en metros reales, no en escala Sketchfab
 
 var _log: FileAccess
@@ -13,20 +13,20 @@ func _ready() -> void:
 	_log = FileAccess.open("user://mapa.log", FileAccess.WRITE)
 	DisplayServer.window_set_size(Vector2i(1100, 1100))
 
-	var curso: Node3D = load(CURSO).instantiate()
-	add_child(curso)
-	curso.scale = Vector3.ONE * ESCALA
-	curso.position = Vector3.ZERO
+	var escenario: Node3D = load(ESCENARIO).instantiate()
+	add_child(escenario)
+	escenario.scale = Vector3.ONE * ESCALA
+	escenario.position = Vector3.ZERO
 	await get_tree().process_frame
 
-	var caja := _aabb(curso)
+	var caja := _aabb(escenario)
 	_traza("AABB en mundo: pos %s  tam %s" % [str(caja.position.round()), str(caja.size.round())])
 	_traza("centro %s" % str(caja.get_center().round()))
 
 	# se recoloca para que la esquina quede en el origen: coordenadas comodas
-	curso.position -= caja.position
+	escenario.position -= caja.position
 	await get_tree().process_frame
-	caja = _aabb(curso)
+	caja = _aabb(escenario)
 	_traza("recolocado -> pos %s  tam %s" % [str(caja.position.round()), str(caja.size.round())])
 
 	var luz := DirectionalLight3D.new()
