@@ -17,7 +17,10 @@ const FRENO_ATERRIZAJE := 0.32   # fraccion de velocidad que le queda al tocar
 # sobrevive al freno igual podia reptar mas de la cuenta. A partir de este
 # tiempo EN EL SUELO (no cuenta el vuelo) se corta y se da por quieta.
 const CAIDA_MAX := 0.5
-const VEL_MARCA := 15.0
+# un aterrizaje que deja huella. Va con la VEL_MAX de golpe.gd: puesto en 15
+# no se marcaba ni una, porque el impulso a tope ya no llega a esa velocidad.
+const VEL_MARCA := 8.0
+const ESTELA_VEL := 10.0   # a partir de aqui el vuelo deja estela; tambien va con VEL_MAX
 const PENA_ANIMAL := 2
 const PENA_DROP := 1
 const MAX_MARCAS := 30
@@ -124,6 +127,10 @@ var _dir_rueda := Vector3.FORWARD
 var _mira_rueda := 0.0                   # ultima mira vista, para girar en el sitio con A/D
 var _aire := 0.0          # timon que le queda a este golpe
 var _marcas: Array = []
+# sube en cada reinicio. Los await que quedaron colgados (el cartel de
+# embocada, sobre todo) miran este numero al despertar: si cambio, la
+# partida que estaban terminando ya no existe y no tienen que tocar nada.
+var _vuelta := 0
 
 @onready var campo: Campo = $Campo
 @onready var bola: RigidBody3D = $Piche
@@ -132,6 +139,7 @@ var _marcas: Array = []
 @onready var camara: Camera3D = $Camara
 @onready var golpe: Node3D = $Golpe
 @onready var entorno: WorldEnvironment = $Entorno
+@onready var pausa: Pausa = $Pausa
 @onready var hud: Label = $UI/Hud
 @onready var msg: Label = $UI/Msg
 @onready var barra: ProgressBar = $UI/Barra
@@ -147,6 +155,10 @@ func _ready() -> void:
 
 	golpe.preparar(bola, camara)
 	golpe.golpeado.connect(_on_golpeado)
+	pausa.reintentar.connect(_reiniciar)
+	# ponytail: salir es cerrar el juego. Si algun dia el menu tiene que
+	# recuperar la partida, aca va un change_scene_to_file a Menu.tscn.
+	pausa.salir.connect(func(): get_tree().quit())
 
 	campo.excluir = [bola.get_rid()]
 	golpe.campo = campo   # para que el rayo de colision de la camara no pise la jaula
@@ -170,6 +182,9 @@ func _quitar_portada() -> void:
 	var t := create_tween()
 	t.tween_property($Portada/Imagen, "modulate:a", 0.0, 0.5)
 	t.tween_callback(_portada.queue_free)
+	# recien ahora: con la portada puesta, pausar congelaria los
+	# temporizadores que la estan quitando y no se iria nunca
+	pausa.habilitada = true
 
 
 ## El piche esta en Piche.tscn. Aca queda solo lo que un .tscn no guarda: el
@@ -294,6 +309,11 @@ func _conectar_tactil() -> void:
 
 
 func _ir_a_hoyo(i: int) -> void:
+	# se van tambien de la escena: vaciar solo la lista dejaba los discos
+	# pegados al campo y al reintentar se acumulaban los de la vuelta anterior
+	for m in _marcas:
+		if is_instance_valid(m):
+			m.queue_free()
 	_marcas.clear()
 	campo.ir_a(i)
 	golpe.reset(campo.pos_tee(), campo.pos_bandera())
@@ -302,6 +322,21 @@ func _ir_a_hoyo(i: int) -> void:
 	_poner_bola(campo.pos_tee())
 	_montar_jaula()    # despues de colocar la bola: la deja dentro
 	golpe.encuadrar()
+
+
+## Volver al principio sin recargar la escena. Cambiar de escena volveria a
+## montar el mapa entero -son los segundos que tapa la portada- y a pasar por
+## la intro, que es justo lo que no se quiere ver al reintentar: aca se
+## rebobina el estado y el campo se queda donde esta.
+func _reiniciar() -> void:
+	_vuelta += 1
+	indice = 0
+	golpes = 0
+	total = 0
+	tarjeta.clear()
+	embocada = false
+	msg.text = ""
+	_ir_a_hoyo(0)
 
 
 func _poner_bola(donde: Vector3) -> void:
@@ -450,7 +485,7 @@ func _physics_process(dt: float) -> void:
 	_golpe_volo = _golpe_volo or volando
 	var zona := campo.zona(pos.x, pos.z)
 	bola.linear_damp = 0.0 if volando else campo.damp_suelo() * campo.factor_damp(zona)
-	estela.emitting = volando and vel.length() > 20.0
+	estela.emitting = volando and vel.length() > ESTELA_VEL
 	if _en_aire and not volando:
 		if vel.length() > VEL_MARCA:
 			_marca(pos, vel.length())
@@ -663,7 +698,10 @@ func _embocar() -> void:
 		"Birdie!" if d < 0 else ("Par" if d == 0 else "+%d" % d), puntos]
 	# tambien en tiempo real: si se emboca con la camara lenta puesta, el cartel
 	# del resultado se estiraba igual que los avisos
+	var vuelta := _vuelta
 	await get_tree().create_timer(1.8, true, false, true).timeout
+	if vuelta != _vuelta:
+		return      # reintentaron mientras se veia el cartel: ya hay otra partida
 	msg.text = ""
 	golpes = 0
 	indice += 1
@@ -749,6 +787,21 @@ func _tecla(codigo: Key, apretada: bool) -> void:
 	e.keycode = codigo
 	e.pressed = apretada
 	Input.parse_input_event(e)
+
+
+## Cuanto vuela el impulso a tope, en metros de suelo. Integra el MISMO modelo
+## de vuelo que aplica la fisica (Util.trayectoria), sobre suelo plano y sin
+## viento: sale el alcance limpio del salto, sin dispersion, sin rebotes y sin
+## que el numero dependa de donde este parado el piche. Es la medida que hay
+## que mirar al tocar VEL_MAX o LOFT en golpe.gd.
+func _alcance_impulso(f := 1.0) -> float:
+	var rapidez: float = lerpf(golpe.VEL_MIN, golpe.VEL_MAX, pow(f, golpe.CURVA))
+	var v: Vector3 = golpe.direccion() * rapidez
+	var giro := clampf(v.normalized().y * 2.2, 0.25, 1.0)
+	var llano := func(_x: float, _z: float) -> float: return 0.0
+	var puntos := Util.trayectoria(Vector3.ZERO, v, giro, Vector3.ZERO, llano)
+	var fin: Vector3 = puntos[puntos.size() - 1]
+	return Vector2(fin.x, fin.z).length()
 
 
 # ponytail: un solo chequeo, salta si el campo o el hoyo se montan mal
@@ -839,6 +892,36 @@ func _self_check() -> void:
 	stamina = stamina_salto
 	print("modelo %s | caja %s | diametro %.2f u"
 		% [vista.scene_file_path.get_file(), str(_caja_bola), _diam_bola])
+	# El salto tiene que cruzar un hueco entre plataformas y ninguna cosa mas.
+	# Los dos topes son el encargo: por debajo del primero no se cruza nada y
+	# hay que ir andando; por encima del segundo un solo impulso a tope se pasa
+	# las plataformas de largo, que es de lo que venimos.
+	var alcance := _alcance_impulso()
+	print("alcance del impulso: barra 1/4 %.1f m | 1/2 %.1f m | 3/4 %.1f m | llena %.1f m"
+		% [_alcance_impulso(0.25), _alcance_impulso(0.5),
+		   _alcance_impulso(0.75), alcance])
+	assert(alcance > 9.0, "el impulso a tope no cruza ni un hueco")
+	assert(alcance < 20.0, "el impulso a tope se pasa las plataformas de largo")
+
+	# el pause: Tab congela, Tab suelta, y reintentar rebobina la partida entera
+	# sin volver a montar el campo -por eso se comprueba que la jaula siga en pie
+	# despues, que es lo unico que se rehace-
+	pausa.habilitada = true
+	golpes = 7
+	total = 500
+	indice = 0
+	pausa.alternar()
+	assert(get_tree().paused and pausa.abierta(), "Tab no pausa")
+	pausa.alternar()
+	assert(not get_tree().paused and not pausa.abierta(), "Tab no despausa")
+	pausa.habilitada = false
+	_reiniciar()
+	assert(golpes == 0 and total == 0 and indice == 0 and tarjeta.is_empty(),
+		"reintentar no vuelve al principio")
+	assert(is_instance_valid(_jaula) and _jaula.puerta_entera() and _jaula.cerrada(),
+		"reintentar no devuelve al piche a la jaula")
+	assert(is_equal_approx(stamina, STAMINA_MAX), "reintentar no repone la stamina")
+
 	print("self-check OK | tee %s | bandera %s | %d m | par %d"
 		% [str(t.round()), str(b.round()),
 		   roundi(Vector2(t.x - b.x, t.z - b.z).length()), campo.par()])

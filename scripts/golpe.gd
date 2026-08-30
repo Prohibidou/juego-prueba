@@ -13,10 +13,17 @@ signal golpeado(velocidad: Vector3)
 # --- calibracion de la fuerza ---
 @export_group("Fuerza")
 @export_range(0.5, 15.0, 0.1) var VEL_MIN := 3.0        # un putt corto
-@export_range(5.0, 60.0, 0.5) var VEL_MAX := 26.0       # un piche completo, no un drive de golf
+# El techo del impulso. Esto es un juego de PLATAFORMAS: el salto largo tiene
+# que cruzar un hueco entre plataformas, no el muelle entero. A 26 m/s el
+# alcance eran ~45 m y con un solo impulso a tope se pasaban todas de largo;
+# el alcance va con el CUADRADO de la velocidad, asi que bajar a 14 lo deja
+# en ~14 m. El muelle mide 218 m de la jaula a la meta: son saltos, no atajos.
+@export_range(5.0, 60.0, 0.5) var VEL_MAX := 14.0
 @export_range(0.1, 3.0, 0.05) var CARGA_POR_SEG := 0.5  # 2 s de barra entera: antes era 0.9 s y todo salia a tope
 # La distancia va con el CUADRADO de la velocidad, asi que una barra lineal se
-# siente "todo o nada". Con CURVA<1 la barra se lee casi como distancia.
+# siente "todo o nada". Con CURVA<1 la barra se lee casi como distancia: con
+# VEL_MIN 3 y VEL_MAX 14 la barra a 1/4, 1/2, 3/4 y llena cae a 3, 6, 10 y 14
+# metros, que es el escalonado que hace falta para elegir plataforma.
 @export_range(0.3, 2.0, 0.05) var CURVA := 0.75
 # Angulo de salida fijo: era un control (flechas, stick derecho y deslizador)
 # que se comia el arriba/abajo, y lo que se quiere ahi es mover al bicho.
@@ -51,7 +58,7 @@ signal golpeado(velocidad: Vector3)
 @export_range(0.2, 20.0, 0.1) var CAM_ATRAS_MAX := 3.2
 @export_range(30.0, 110.0, 1.0) var CAM_FOV := 62.0
 @export_range(30.0, 120.0, 1.0) var CAM_FOV_MAX := 74.0
-@export_range(1.0, 60.0, 0.5) var CAM_VEL_REF := 24.0      # m/s a los que la camara esta del todo abierta: va con VEL_MAX
+@export_range(1.0, 60.0, 0.5) var CAM_VEL_REF := 13.0      # m/s a los que la camara esta del todo abierta: va con VEL_MAX
 @export_range(0.0, 3.0, 0.05) var CAM_UMBRAL_QUIETO := 0.3 # m/s: por debajo, "quieto" para la camara (igual que QUIETA en juego.gd)
 # Rumbo con tope de giro: un tiron del stick puede cambiar la velocidad de la
 # bola de golpe (90 grados o mas), pero la camara y la mira no saltan con

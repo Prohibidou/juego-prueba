@@ -26,10 +26,14 @@ signal reventada(fuera: Vector3)
 
 const MARGEN := 0.35           # cuanto antes del plano de la puerta se dispara
 # La puerta solo cede a un golpe, no a que se apoyen en ella. La jaula no sabe
-# que es un "impulso" y no tiene por que saberlo: le alcanza con la velocidad.
-# Empujando se anda a 4.5 m/s como mucho y un impulso pasa de 20, asi que en el
-# medio hay sitio de sobra para separarlos.
-const MINIMA := 10.0           # m/s por debajo de los cuales la puerta aguanta
+# que es un "impulso" y no tiene por que saberlo: le alcanza con lo que la
+# empuje HACIA FUERA. Andando se va a 4.5 m/s como mucho y un impulso a tope
+# pasa de 12, asi que en el medio hay sitio para separarlos.
+#
+# Se mira la componente de salida y no la velocidad entera a proposito:
+# medida entera, andar (4.5) mas brincar (5.5 hacia arriba) suman 7.1 y con el
+# umbral bajo tiraban la puerta de un brinco, que no es un portazo.
+const MINIMA := 6.0            # m/s de empuje hacia fuera por debajo de los cuales aguanta
 const CAE := 250.0             # grados que da la puerta al salir despedida
 const ABRE := 80.0             # los que cede mientras la empujan
 const VUELA := 2.0             # metros que la manda hacia fuera el impacto
@@ -137,18 +141,17 @@ func tirar_puerta(empuje: float, suelta: float) -> void:
 	Util.reventar(self, _bisagra.global_position, Color(0.62, 0.56, 0.48), 16)
 
 
-## Se mira la GEOMETRIA y no los contactos: a 26 m/s la colision la resuelve el
-## CCD y get_colliding_bodies() no la reporta, asi que la puerta no caia hasta
-## que el piche se paraba. El margen es generoso a proposito: un fotograma a esa
-## velocidad son 43 cm y hay que cazarla igual.
+## Se mira la GEOMETRIA y no los contactos: a la velocidad de un impulso la
+## colision la resuelve el CCD y get_colliding_bodies() no la reporta, asi que
+## la puerta no caia hasta que el piche se paraba. El margen es generoso a
+## proposito: un fotograma a esa velocidad son 20 cm y hay que cazarla igual.
 func _physics_process(_dt: float) -> void:
 	if _rota or _vigilado == null or not is_instance_valid(_tapa):
 		return
 	var salida := fuera()
-	if _vigilado.linear_velocity.length() < MINIMA:
-		return                                  # se apoya, no golpea
-	if _vigilado.linear_velocity.dot(salida) <= 0.0:
-		return                                  # va hacia dentro: no es portazo
+	# de paso resuelve el rumbo: hacia dentro el empuje es negativo y no pasa
+	if _vigilado.linear_velocity.dot(salida) < MINIMA:
+		return                                  # se apoya o va para otro lado, no golpea
 	var p: Vector3 = global_transform.affine_inverse() * _vigilado.global_position
 	if p.x < _frente - MARGEN or absf(p.z) > _ancho or p.y > _dintel:
 		return                                  # lejos, o va a dar en una jamba

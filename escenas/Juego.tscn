@@ -6,6 +6,7 @@
 [ext_resource type="PackedScene" uid="uid://i61txw5smhdd" path="res://escenas/Campo.tscn" id="4_4ru81"]
 [ext_resource type="Script" uid="uid://dljmkirv0dom7" path="res://scripts/campo.gd" id="5_nv0ic"]
 [ext_resource type="PackedScene" uid="uid://nv4bpr3ue734" path="res://escenas/Piche.tscn" id="6_jv425"]
+[ext_resource type="PackedScene" path="res://escenas/Pausa.tscn" id="7_pausa"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_l3i6u"]
 sky_top_color = Color(0.32, 0.55, 0.9, 1)
@@ -120,6 +121,8 @@ offset_right = -24.0
 offset_bottom = 55.0
 focus_mode = 0
 text = "DROP +1"
+
+[node name="Pausa" parent="." instance=ExtResource("7_pausa")]
 
 [node name="Portada" type="CanvasLayer" parent="." unique_id=601856004]
 layer = 100
