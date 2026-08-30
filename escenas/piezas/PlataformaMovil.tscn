@@ -1,0 +1,15 @@
+[gd_scene format=3 uid="uid://ckk7xmqrfmhmy"]
+
+[ext_resource type="Script" uid="uid://cdeqqh6rhnur1" path="res://scripts/plataforma_movil.gd" id="1_20kq8"]
+[ext_resource type="Shape3D" uid="uid://wit721omv841" path="res://escenas/piezas/plataforma_forma_a.tres" id="1_pvqrb"]
+[ext_resource type="ArrayMesh" uid="uid://odlfxlkbtyva" path="res://escenas/piezas/plataforma_chapa.tres" id="2_20kq8"]
+
+[node name="PlataformaMovil" type="AnimatableBody3D" unique_id=846114368]
+script = ExtResource("1_20kq8")
+
+[node name="Forma" type="CollisionShape3D" parent="." unique_id=1764802266]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.0121415, 0)
+shape = ExtResource("1_pvqrb")
+
+[node name="Malla" type="MeshInstance3D" parent="." unique_id=1395040795]
+mesh = ExtResource("2_20kq8")

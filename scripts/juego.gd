@@ -36,6 +36,13 @@ const STAMINA_MAX := 100.0
 const STAMINA_BASURA := 20.0
 const STAMINA_IMPULSO := 60.0 # lo que cuesta el impulso (G) a barra llena
 const IMPULSO_SALTO := 5.5    # m/s hacia arriba, sin tocar lo que ya lleve
+# Basta con ROZAR el agua. Se compara el punto mas bajo del piche (su centro
+# menos el radio) contra la CRESTA de la ola, no su centro contra el plano del
+# mar: antes habia que hundirse 25 cm y se lo veia medio sumergido, nadando,
+# antes de que reiniciara. Este numero es lo que sube la ola sobre el plano
+# (amplitud de mar.gdshader). Las chapas del cruce sobresalen 0.36, asi que
+# quedan 0.26 de aire entre estar parado en una y darse por mojado.
+const CRESTA_OLA := 0.10
 # Por debajo de esto no hay impulso: ni barra, ni golpe minimo. Es el mismo
 # numero que pinta de rojo la barra, para que lo que se ve y lo que se puede
 # hacer sean la misma regla.
@@ -117,6 +124,11 @@ var _portazo := 1.0           # que fraccion de su velocidad lleva mientras
 var _vel_portazo := Vector3.ZERO   # el disparo entero, congelado en el impacto
 var _pulso_salto := false     # para detectar el flanco del espacio
 var _saltando := false        # brinco en curso: sin soltar el mando
+# Suspende el rescate al agua. Lo usa SOLO el chequeo del casco, que dispara
+# la bola sobre el mar: en el vuelo cae por debajo del agua y el rescate se la
+# llevaba al checkpoint, con lo que la distancia medida dejaba de ser "cuanto
+# atraviesa el casco" y pasaba a ser "que lejos esta el checkpoint" (14 m).
+var _sin_rescate := false
 var _vel_andar := 0.0         # velocidad de _conducir(): solo sube con mando, nunca con el terreno
 var _angulo_rueda := 0.0                 # cuanto lleva rodado
 var _eje_rueda := Vector3.RIGHT          # el eje del disco: su cara plana
@@ -248,11 +260,19 @@ func _preparar_modelo(raiz: Node3D) -> AABB:
 ## en el punto de contacto de la bola. Antes el levante iba en ejes de la bola y
 ## al rodar apuntaba hacia abajo: por eso se hundia en el mapa.
 func _escalar_vista(dist: float, dt := 0.0) -> void:
+	# Vista es top_level y se escribe a mano en cada frame de render, asi que
+	# no la interpola el motor (queda en physics_interpolation_mode OFF): la
+	# suavidad sale de leer ACA la posicion YA interpolada de la bola en vez
+	# del valor crudo a 60 Hz de fisica. Sin esto, la bola (y cualquier cosa
+	# que la lleve, como una plataforma movil) se veia a saltos -"ghosting"-
+	# aunque physics_interpolation este prendido, porque top_level ignora la
+	# interpolacion normal de padre a hijo.
+	var pos_bola := bola.get_global_transform_interpolated().origin
 	var alto := 2.0 * dist * tan(deg_to_rad(camara.fov) * 0.5)
 	var e := clampf(VISTA_PANTALLA * alto, Util.RADIO * 2.0, VISTA_MAX) / _diam_bola
 	var base := _rodar(e, dt).scaled(Vector3.ONE * e)
 	var caja := Transform3D(base, Vector3.ZERO) * _caja_bola
-	vista.global_transform = Transform3D(base, bola.global_position - Vector3(
+	vista.global_transform = Transform3D(base, pos_bola - Vector3(
 		caja.get_center().x, caja.position.y + Util.RADIO, caja.get_center().z))
 
 
@@ -304,11 +324,15 @@ func _ir_a_hoyo(i: int) -> void:
 	golpe.encuadrar()
 
 
-func _poner_bola(donde: Vector3) -> void:
+## `exacto` planta la bola en la Y que le pasan, sin volver a tirar el rayo de
+## altura. Hace falta para el checkpoint: alli la Y ya sale de la caja, y el
+## rayo -que cae desde el techo del mapa- daria antes en la superestructura del
+## barco que en la caja, dejando al piche colgado de una grua.
+func _poner_bola(donde: Vector3, exacto := false) -> void:
 	bola.freeze = true
 	bola.linear_velocity = Vector3.ZERO
 	bola.angular_velocity = Vector3.ZERO
-	bola.global_position = Vector3(donde.x,
+	bola.global_position = donde + Vector3.UP * Util.RADIO if exacto else Vector3(donde.x,
 		campo.altura_terreno(donde.x, donde.z) + Util.RADIO, donde.z)
 	bola.angular_damp = 0.6
 	quieto = true
@@ -394,7 +418,8 @@ func _process(dt: float) -> void:
 	# Que la bola no se pierda de vista. Parada se dibuja a tamano real, que es
 	# cuando la camara esta encima y se vería un melon al lado del palo; en
 	# juego se agranda con la distancia, de modo que ocupa siempre lo mismo.
-	_escalar_vista(camara.global_position.distance_to(bola.global_position), dt)
+	_escalar_vista(camara.global_position.distance_to(
+		bola.get_global_transform_interpolated().origin), dt)
 
 	barra.value = golpe.fuerza * 100.0
 	var p := bola.global_position
@@ -414,6 +439,26 @@ func _process(dt: float) -> void:
 
 func _physics_process(dt: float) -> void:
 	if not listo or embocada:
+		return
+
+	# si esta parada sobre una plataforma movil, la arrastra ESTE tick antes
+	# que nada mas: _conducir() mas abajo congela la bola en cuanto sueltan el
+	# mando, y una bola congelada no la mueve ni la friccion ni el
+	# sync_to_physics del AnimatableBody3D (medido: se quedaba quieta y la
+	# plataforma se le escapaba de abajo entera). Por eso esto es geometria
+	# -un rayo corto hacia abajo-, no contacto: funciona este quieta o no.
+	var plataforma := _sobre_plataforma()
+	if plataforma:
+		bola.global_position += plataforma.empuje()
+
+	# Al agua: al checkpoint. Va ARRIBA DEL TODO a proposito. Estaba mas abajo,
+	# despues del `if quieto: ... return`, y andando o pegando un brinco normal
+	# `quieto` NO se apaga (el salto no toca ese estado, a proposito): el return
+	# cortaba antes y el rescate solo saltaba tras un impulso con G, que es lo
+	# unico que pone quieto en false. Mojarse no depende de en que estado vayas.
+	# (CLAUDE.md: lo que se decide en _process se queda sin hacer si algo corta
+	# antes con un return.)
+	if _revisar_agua():
 		return
 
 	# el golpe se aplica aqui: descongelar y empujar en el mismo tick de fisica
@@ -520,6 +565,54 @@ func _physics_process(dt: float) -> void:
 		_t_caida = 0.0
 
 
+## Rayo corto hacia abajo desde la bola: si lo que pisa esta en el grupo
+## "plataformas", ese es el tablon que la sostiene. Geometria, no contactos
+## -misma razon que la jaula no usa get_colliding_bodies(), ver CLAUDE.md-.
+## Hay algo SOLIDO justo debajo. Rayo corto, con mascara 1: el mar vive en su
+## propia capa (campo.CAPA_AGUA) a proposito, asi que el agua no cuenta como
+## apoyo y quien la roza cae -y lo recoge el rescate al checkpoint-.
+func _apoyado() -> bool:
+	var esp := get_world_3d().direct_space_state
+	var desde := bola.global_position
+	var q := PhysicsRayQueryParameters3D.create(
+		desde, desde + Vector3.DOWN * (Util.RADIO + 0.12))
+	q.exclude = campo.excluir
+	q.collision_mask = 1
+	return not esp.intersect_ray(q).is_empty()
+
+
+## Devuelve true si toco el agua y ya se la llevo al checkpoint, para que
+## quien llame corte el tick: la bola acaba de moverse a otro sitio y todo lo
+## que venga despues estaria mirando una posicion vieja.
+func _revisar_agua() -> bool:
+	if _sin_rescate:
+		return false
+	if bola.global_position.y - Util.RADIO >= campo.nivel_agua() + CRESTA_OLA:
+		return false
+	var refugio := campo.checkpoint()
+	if refugio == Vector3.ZERO:
+		_poner_bola(_desde)              # sin caja de checkpoint, al ultimo sitio seco
+	else:
+		_poner_bola(refugio, true)
+	_aviso("¡Al agua!", 1.4)
+	return true
+
+
+func _sobre_plataforma() -> Node3D:
+	var esp := get_world_3d().direct_space_state
+	var desde := bola.global_position
+	var q := PhysicsRayQueryParameters3D.create(
+		desde, desde + Vector3.DOWN * (Util.RADIO + 0.15))
+	q.exclude = campo.excluir
+	var hit := esp.intersect_ray(q)
+	if hit.is_empty():
+		return null
+	var cuerpo: Object = hit.get("collider")
+	if cuerpo is Node3D and (cuerpo as Node3D).is_in_group("plataformas"):
+		return cuerpo as Node3D
+	return null
+
+
 ## El stick izquierdo rueda el piche mientras esta parado. En el aire ese mismo
 ## stick es el timon, asi que no se pisan. CONDUCE_MAX topa la velocidad de
 ## andar; para cruzar el campo de verdad hay que golpear.
@@ -534,10 +627,25 @@ func _conducir(dt: float) -> void:
 		# En pleno brinco no: el salto no saca de "quieto", asi que soltar el
 		# stick en el aire dejaba al piche congelado a media altura.
 		_vel_andar = 0.0
-		if not bola.freeze and not _saltando:
-			bola.linear_velocity = Vector3.ZERO
-			bola.angular_velocity = Vector3.ZERO
-			bola.freeze = true
+		if _saltando:
+			return
+		# ...pero congelar SOLO si hay suelo debajo. Sin esa condicion, quien se
+		# caminaba del borde del barco y soltaba el mando se quedaba flotando
+		# en el aire: congelado no le entra la gravedad, y nada volvia a
+		# descongelarlo hasta el proximo impulso.
+		if _apoyado():
+			if not bola.freeze:
+				bola.linear_velocity = Vector3.ZERO
+				bola.angular_velocity = Vector3.ZERO
+				bola.freeze = true
+				_aplicar_damp()      # al pisar vuelve el rozamiento del suelo
+		else:
+			# En el aire manda la gravedad, no el hielo. Y el damp se pone a
+			# cero: es el del SUELO (cesped, chapa) y dejarlo puesto mientras
+			# caes frena la caida a ~1 m/s, que es la otra mitad de por que el
+			# piche "flotaba" al salirse del barco.
+			bola.freeze = false
+			bola.linear_damp = 0.0
 		return
 	bola.freeze = false      # congelada no admite fuerzas
 	# la velocidad de andar la lleva ESTA variable, no lo que traiga ya
@@ -843,6 +951,151 @@ func _self_check() -> void:
 		% [str(t.round()), str(b.round()),
 		   roundi(Vector2(t.x - b.x, t.z - b.z).length()), campo.par()])
 	if DisplayServer.get_name() == "headless":
+		# las plataformas del muelle: si no se movieran, esto se quedaria en
+		# 0.00 pese a que _physics_process corre igual, porque no compara nada
+		# contra el propio origen de cada una. Se mide ACA, antes del portazo:
+		# _cine_portazo() mas abajo pone Engine.time_scale en camara lenta sin
+		# esperarlo (dispara y sigue), y el vaiven usa delta escalado a
+		# proposito (ver plataforma_movil.gd) para no desincronizarse con el
+		# resto del juego en cine lento -medido ahi, esto daba 0.00 sin que
+		# las plataformas tuvieran nada roto.
+		var tablones := get_tree().get_nodes_in_group("plataformas")
+		# no se clava el numero: la cadena de chapas se alarga y se acorta al
+		# disenar el salto, y un assert con el total exacto solo obliga a venir a
+		# tocarlo aca cada vez sin atrapar ningun error de verdad
+		assert(tablones.size() >= 4, "faltan tablones del muelle")
+		# que cada tablon TENGA la chapa puesta. Esto no es cosmetico: el molde
+		# trae un BoxMesh de relleno, y cuando una instancia se queda con ese
+		# placeholder la plataforma se dibuja como un cubo de 4 m -paso, y los
+		# asserts de movimiento no lo vieron porque moverse, se movia igual-.
+		for p in tablones:
+			var malla := (p as Node3D).get_node("Malla") as MeshInstance3D
+			assert(malla.mesh is ArrayMesh,
+				"%s se quedo con la malla de relleno en vez de la chapa" % p.name)
+		# un delta en ventana fija (1 s) servia con periodo=6, pero con
+		# periodo=3 esa misma ventana es un tercio del ciclo: segun la fase en
+		# que arranca el chequeo puede caer cerca de un pico (poco desplazamiento
+		# neto) sin que la plataforma tenga nada roto -midio 0.90 una vez con
+		# amplitud 2.5, muy por debajo de lo esperado, y no era regresion.
+		# Barrer minimo a maximo durante UN CICLO COMPLETO no depende de la fase.
+		var referencia: Node3D = tablones[0]
+		var periodo_ref: float = referencia.periodo
+		var minimo := referencia.position
+		var maximo := referencia.position
+		var ticks := roundi(periodo_ref * Engine.physics_ticks_per_second) + 5
+		for i in ticks:
+			await get_tree().physics_frame
+			minimo = minimo.min(referencia.position)
+			maximo = maximo.max(referencia.position)
+		var barrido := minimo.distance_to(maximo)
+		print("plataformas: en un ciclo (%.1f s) barren %.2f m" % [periodo_ref, barrido])
+		assert(barrido > 1.0, "las plataformas del muelle no se mueven")
+
+		# y la bola tiene que IRSE con la plataforma que la sostiene: un
+		# AnimatableBody3D con sync_to_physics (el default) empuja al que se le
+		# apoya encima solo con que este script le reescriba position, pero eso
+		# no se prueba solo, se mide contra el mundo
+		var tablon: Node3D = tablones[0]
+		var forma: CollisionShape3D = tablon.get_node("Forma")
+		# la caja de colision no siempre esta centrada en el origen del tablon
+		# (en las chapas va corrida medio alto hacia arriba, para que su base
+		# quede a ras de la malla, que arranca en y=0): sumar el offset de
+		# Forma o la bola largaba por debajo de la superficie real. Y ese
+		# offset esta en ejes LOCALES del tablon: si el tablon esta escalado
+		# (las chapas van a 3x para el tamano de las plataformas viejas), hay
+		# que escalarlo tambien -"position no lleva la escala del nodo"-.
+		var alto: float = (forma.position.y + (forma.shape as BoxShape3D).size.y * 0.5) \
+			* tablon.scale.y
+		bola.freeze = false
+		bola.global_position = tablon.global_position + Vector3(0, alto + Util.RADIO + 0.02, 0)
+		bola.linear_velocity = Vector3.ZERO
+		for i in 10:
+			await get_tree().physics_frame   # que se asiente el contacto
+		var relativo_antes := bola.global_position - tablon.global_position
+		for i in 90:
+			await get_tree().physics_frame
+		var relativo_despues := bola.global_position - tablon.global_position
+		var deriva := Vector2(relativo_despues.x - relativo_antes.x,
+			relativo_despues.z - relativo_antes.z).length()
+		print("plataforma movil: en 1.5 s la bola se separa %.2f m del tablon" % deriva)
+		assert(deriva < 0.5, "la bola no viaja con la plataforma: se queda atras")
+		# al agua -> checkpoint. Se tira la bola al mar de verdad y se deja
+		# correr la fisica: si el rescate no existiera se hundiria, asi que
+		# este assert PUEDE fallar (no mide algo que pasa igual sin codigo).
+		var agua: float = campo.nivel_agua()
+		var refugio: Vector3 = campo.checkpoint()
+		assert(is_finite(agua), "el mapa no trae mar del que medir el nivel")
+		assert(refugio != Vector3.ZERO, "no hay Caja_checkpoint donde reaparecer")
+		# Se la SUELTA sobre mar abierto y cae sola: nada de teletransportarla
+		# ya hundida. Es la diferencia entre probar el rescate y probar que el
+		# agua no sea piso -con el mar en la capa de siempre el piche se
+		# quedaba caminando encima, no bajaba del nivel del agua nunca y esto
+		# no saltaba jamas, que es justo el fallo que hubo-.
+		bola.freeze = false
+		quieto = false
+		bola.global_position = Vector3(1005.0, agua + 4.0, 765.0)
+		bola.linear_velocity = Vector3.ZERO
+		var rescatada := false
+		var mas_hondo := 999.0    # lo mas abajo del agua que llego a estar
+		for i in 120:
+			await get_tree().physics_frame
+			var bajo: float = bola.global_position.y - Util.RADIO - agua
+			if not rescatada:
+				mas_hondo = minf(mas_hondo, bajo)
+			if bola.global_position.distance_to(refugio) < 1.0:
+				rescatada = true
+				break
+		print("agua: al tocarla se hundio %.2f m antes de reiniciar (rescatada=%s)"
+			% [-minf(mas_hondo, 0.0), str(rescatada)])
+		assert(rescatada, "tocar el agua no reinicia sobre Caja_checkpoint")
+		# si el mar fuera piso solido nunca bajaria, y si hiciera falta hundirse
+		# esto daria un numero grande: con rescate por contacto es casi cero
+		assert(mas_hondo > -0.5, "se hunde demasiado antes de reiniciar")
+
+		# Sin suelo debajo, CAE. Se lo suelta en el aire sobre la cubierta, sin
+		# tocar el mando y con quieto=true, que es como queda quien se camina
+		# del borde del barco: antes _conducir() lo congelaba igual y se
+		# quedaba flotando a media altura para siempre.
+		# A 4 m del tee: sobre el tee mismo esta la jaula y la bola caia en su
+		# techo. Ademas los cuerpos de la jaula van en campo.excluir, asi que
+		# _apoyado() no los ve y alli el chequeo no medía lo que dice medir.
+		_poner_bola(campo.pos_tee())
+		var suelto := Vector3(t.x + 4.0, 0.0, t.z)
+		var cubierta: float = campo.altura_terreno(suelto.x, suelto.z, t.y + 2.0)
+		bola.global_position = Vector3(suelto.x, cubierta + 3.0, suelto.z)
+		bola.freeze = true            # como lo deja _conducir() sin mando
+		var y_alto: float = bola.global_position.y
+		for i in 90:
+			await get_tree().physics_frame
+		var y_bajo: float = bola.global_position.y
+		print("aire: soltado 3 m sobre cubierta (%.2f), cayo a %.2f" % [cubierta, y_bajo])
+		assert(y_bajo < y_alto - 1.0, "el piche se queda flotando: no cae sin suelo")
+		assert(absf(y_bajo - cubierta) < 0.4, "no aterrizo en la cubierta")
+
+		# ...y lo mismo ANDANDO, con quieto=true, que es como se va uno al agua
+		# de un brinco o caminandose del borde. Este es el caso que fallaba: el
+		# rescate vivia detras del `if quieto: ... return` y solo se disparaba
+		# despues de un impulso con G.
+		_poner_bola(campo.pos_tee())     # deja quieto=true, como andando
+		assert(quieto, "el chequeo de andar no arranca en quieto")
+		bola.global_position = Vector3(1005.0, agua, 765.0)
+		var rescatada_andando := false
+		for i in 30:
+			await get_tree().physics_frame
+			if bola.global_position.distance_to(refugio) < 1.0:
+				rescatada_andando = true
+				break
+		print("agua: tocandola ANDANDO (quieto=%s) reinicia=%s"
+			% [str(quieto), str(rescatada_andando)])
+		assert(rescatada_andando,
+			"andando o de un brinco, tocar el agua no reinicia (solo tras la G)")
+
+		# _probar_jaula() no reposiciona nada al empezar: cuenta con que la
+		# bola ya este adentro, como la dejo el chequeo de mas arriba
+		_poner_bola(campo.pos_tee())
+		_montar_jaula()
+		golpe.reset(campo.pos_tee(), campo.pos_bandera())
+
 		await _probar_jaula()
 		await get_tree().create_timer(0.5).timeout
 		golpe.activo = true      # soltar() sale de vacio si no hubo cargar()
@@ -872,15 +1125,32 @@ func _self_check() -> void:
 		# a alta velocidad se ocupa el CCD del piche. Se dispara la bola contra
 		# el costado y se mira GEOMETRIA (cuanto pasa del plano del casco), no
 		# contactos, que a esa velocidad el CCD no reporta.
-		var costado := Vector3(t.x - 12.0, 172.0, t.z + 12.0)   # sobre el mar
-		var frente_casco := Vector3(t.x, 172.0, t.z)            # bajo cubierta
+		# La sonda se CALIBRA SOLA en vez de ir clavada a mano: las puntas
+		# viejas (y=172, tee+-12) apuntaban al barco del mapa viejo, y al
+		# llegar un glb nuevo el rayo salia al vacio y este chequeo fallaba sin
+		# que hubiera ninguna regresion de fisica que reportar. Se barren
+		# alturas por DEBAJO de la cubierta -donde esta el casco que se quiere
+		# atravesar- y se toma la primera que da en algo.
 		var esp := get_world_3d().direct_space_state
-		var q := PhysicsRayQueryParameters3D.create(costado, frente_casco)
-		q.exclude = campo.excluir
-		var casco := esp.intersect_ray(q)
+		var costado := Vector3.ZERO
+		var frente_casco := Vector3.ZERO
+		var casco := {}
+		for hondo in [1.0, 1.5, 2.0, 2.5, 3.0, 3.5]:
+			var y_casco: float = t.y - hondo
+			var a := Vector3(t.x - 18.0, y_casco, t.z)          # sobre el mar
+			var b2 := Vector3(t.x, y_casco, t.z)                # bajo cubierta
+			var q := PhysicsRayQueryParameters3D.create(a, b2)
+			q.exclude = campo.excluir
+			var r: Dictionary = esp.intersect_ray(q)
+			if not r.is_empty():
+				costado = a
+				frente_casco = b2
+				casco = r
+				break
 		assert(not casco.is_empty(), "el rayo al costado no encuentra el casco")
 		var plano: Vector3 = casco["position"]
 		var dir := (frente_casco - costado).normalized()
+		_sin_rescate = true                 # ver _sin_rescate: el vuelo pasa bajo el agua
 		bola.freeze = false
 		bola.global_position = costado
 		bola.linear_velocity = dir * 26.0   # el vector ENTERO, ver CLAUDE.md
@@ -889,6 +1159,7 @@ func _self_check() -> void:
 		for i in 90:
 			await get_tree().physics_frame
 			tras = maxf(tras, (bola.global_position - plano).dot(dir))
+		_sin_rescate = false
 		print("casco: disparada a 26 m/s, la bola pasa %.2f m del plano del casco" % tras)
 		assert(tras < 1.0, "la bola atraviesa el casco del barco")
 		_poner_bola(campo.pos_tee())

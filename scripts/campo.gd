@@ -26,6 +26,8 @@ const BASURAS := 16            # piezas por hoyo
 # medidas reales de golf
 # --- la meta: subirse a la camioneta ---
 const META := "CAMIONETA"      # nombre de la malla dentro del glb del mapa
+const META_AGUA := "Mar"       # la malla del mar dentro del mismo glb
+const CAPA_AGUA := 2           # capa aparte: el piche (mascara 1) no la choca
 const MARGEN_META := 0.35      # fraccion del ancho que cuenta como "encima"
 # A partir de que altura de su caja se considera que estas ARRIBA. Medido con
 # rayos sobre la camioneta del muelle: el piso de la caja esta a 0.39 de su
@@ -87,6 +89,8 @@ var _meta := AABB()
 var _bandera := Vector3.ZERO
 var _labio := 0.0
 var _techo := TECHO             # el de verdad lo mide preparar() con la caja del mapa
+var _nivel_agua := -INF         # techo del mar; lo mide preparar()
+var _olas: Mar = null           # el plano de olas; lo busca preparar()
 var animales: Array = []
 var basura: Array = []
 
@@ -107,6 +111,16 @@ func preparar() -> void:
 	var marcador := _curso.find_child("jaula", true, false)
 	if marcador:
 		marcador.queue_free()
+
+	# Plataformas_mar trae los siete tablones del muelle fundidos en UNA sola
+	# malla estatica: no hay como moverlos por separado desde ahi. Los
+	# reemplazan las instancias de PlataformaMovil.tscn en Plataformas/,
+	# copiadas de la misma geometria pero sueltas y con su propio vaiven. Se
+	# borra aca por lo mismo que el marcador de la jaula: un nodo de dentro de
+	# una instancia no se puede sacar en el editor.
+	var plataformas_viejas := _curso.find_child("Plataformas_mar", true, false)
+	if plataformas_viejas:
+		plataformas_viejas.queue_free()
 	await get_tree().process_frame   # que el marcador se haya ido antes de colisionar
 
 	# ponytail: la colision se genera en cada arranque y son varios segundos
@@ -119,6 +133,20 @@ func preparar() -> void:
 	# (mastiles, gruas) y subir el techo de los rayos por encima de eso.
 	var caja := _aabb(_curso)
 	_techo = caja.position.y + caja.size.y + MARGEN_TECHO
+
+	# el techo del mar: por encima de esto se anda, por debajo te mojas
+	var mar := _curso.find_child("Mar", true, false) as MeshInstance3D
+	if mar != null:
+		_nivel_agua = (mar.global_transform * mar.mesh.get_aabb()).end.y
+
+	# El oleaje. Se lo PRESENTA a cada chapa (llamada hacia abajo): asi ellas
+	# no salen a buscar a nadie con get_node("..") y la escena del tablon
+	# sigue montandose sola.
+	_olas = get_node_or_null("MarOlas") as Mar
+	if _olas != null:
+		for t in get_tree().get_nodes_in_group("plataformas"):
+			if t.has_method("flotar_en"):
+				t.flotar_en(_olas)
 
 	var n := 0
 	for m: MeshInstance3D in _mallas(_curso):
@@ -135,6 +163,19 @@ func preparar() -> void:
 		# el piso (Jaula.tscn): sobre la cubierta real, irregular, la bola se
 		# colaba por la rendija entre tapa y suelo y "la puerta no paraba".
 		m.create_trimesh_collision()
+		# EL MAR NO ES PISO. Con la colision en la capa de siempre el piche
+		# caminaba sobre el agua: no bajaba nunca del nivel del mar (asi que
+		# el rescate al checkpoint no se disparaba jamas) y, peor, se podia
+		# cruzar hasta el muelle a pie, con lo que el salto de chapa en chapa
+		# no pintaba nada. No se le quita la colision del todo porque los
+		# rayos de altura la necesitan -sin ella la basura sembrada sobre el
+		# agua se iba a la altura de la bandera, flotando en el aire-: se la
+		# manda a una capa que el piche no mira. _rayo() no lleva mascara, o
+		# sea que las ve todas y sigue midiendo el agua igual.
+		if m.name == META_AGUA:
+			for cuerpo in m.get_children():
+				if cuerpo is StaticBody3D:
+					(cuerpo as StaticBody3D).collision_layer = CAPA_AGUA
 		# Un trimesh choca solo por el lado de las normales (backface_collision
 		# arranca en false, y desde Godot 4.5 Jolt lo respeta de verdad). Medio
 		# mapa esta modelado a una cara -galpones, silos, el casco-, asi que la
@@ -194,6 +235,39 @@ func pos_bandera() -> Vector3:
 	return _bandera
 
 
+## Altura de la superficie del mar, en coordenadas de MUNDO. Se mide de la
+## malla "Mar" del mapa en vez de clavarse a un numero: el glb ya cambio una
+## vez y todo lo que estaba a mano -el tee, la sonda del casco- se rompio en
+## silencio. Si algun mapa no trae mar, devuelve -INF y nadie se ahoga.
+func nivel_agua() -> float:
+	return _nivel_agua
+
+
+## Y de la SUPERFICIE del agua en un punto: el plano de reposo mas la ola que
+## haya justo ahi. Mientras hubo un solo numero (el plano) habia que sumarle a
+## ojo la cresta mas alta; con esto se pregunta por el punto y se acabo.
+func altura_agua(x: float, z: float) -> float:
+	if _olas == null:
+		return _nivel_agua
+	return _nivel_agua + _olas.altura(x, z)
+
+
+## Donde reaparece el piche al caer al agua: justo ENCIMA de Caja_checkpoint.
+## Devuelve Vector3.ZERO si esa caja no esta puesta, y entonces quien llame se
+## las arregla (se queda con el tee).
+func checkpoint() -> Vector3:
+	var caja := find_child("Caja_checkpoint", true, false) as Node3D
+	if caja == null:
+		return Vector3.ZERO
+	var forma := caja.get_node_or_null("Forma") as CollisionShape3D
+	if forma == null or forma.shape == null:
+		return caja.global_position
+	# la caja de colision no esta centrada en el origen y el nodo va escalado:
+	# hay que escalar el desplazamiento, que `position` no lo lleva
+	var media: float = (forma.shape as BoxShape3D).size.y * 0.5
+	return caja.global_position + Vector3.UP * (forma.position.y + media) * caja.scale.y
+
+
 func labio_copa() -> float:
 	return _labio
 
@@ -208,7 +282,14 @@ func ir_a(i: int) -> void:
 	# cubierta con sitio detras para la camara.
 	var t: Vector3 = $Tee.position
 	var b: Vector3 = $Bandera.position
-	_tee = Vector3(t.x, altura_suelo(t.x, t.z), t.z)
+	# La CUBIERTA del barco es una cascara fina, y altura_suelo() esta hecha
+	# para pelar hojas de un arbol: cada pelada tira un rayo hacia abajo y el
+	# de la cubierta no encuentra nada hasta el mar, asi que de 168 se caia a
+	# 163.8 de un salto y el tee -con la jaula y el piche dentro- amanecia
+	# flotando en el agua. Sobre algo macizo va el PRIMER impacto con el techo
+	# justo encima (ver CLAUDE.md), no el pelado. De ahi que la Y del marcador
+	# Tee si importe: es ese techo, no la altura final.
+	_tee = Vector3(t.x, altura_terreno(t.x, t.z, t.y + 2.0), t.z)
 	if _meta.size != Vector3.ZERO:
 		# la meta es la camioneta: la bandera apunta a su caja, que es a donde
 		# hay que llegar, y no se planta ninguna copa sobre la cubierta
