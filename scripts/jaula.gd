@@ -63,7 +63,7 @@ func vigilar(cuerpo: RigidBody3D) -> void:
 
 
 ## Los cuerpos de la jaula, para que quien lance rayos de altura los excluya:
-## si no, el rayo del tee da en el techo y todo se coloca dos metros mas arriba.
+## si no, el rayo de la salida da en el techo y todo se coloca dos metros mas arriba.
 func cuerpos() -> Array[RID]:
 	var rids: Array[RID] = []
 	for sb in find_children("*", "StaticBody3D", true, false):
