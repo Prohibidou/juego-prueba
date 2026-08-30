@@ -266,6 +266,18 @@ func _girar_hacia(actual: Vector3, objetivo: Vector3, max_rad: float) -> Vector3
 	return Vector3(sin(a), 0, cos(a))
 
 
+## El punto pegado al piche desde el que se tiran los rayos anti-pared: el
+## "ojo". Es UNO solo para el objetivo y para la posicion real de la camara;
+## si cada uno midiera desde un origen distinto, sus clamps no verian la misma
+## pared. Publica: el self-check de juego.gd mide desde aqui si la camara
+## quedo tapada.
+func origen_camara() -> Vector3:
+	if cine:
+		return _bola.global_position
+	var alto := CAM_ALTO_JAULA if (activo and enjaulado) else CAM_ALTO
+	return _bola.global_position + Vector3.UP * alto
+
+
 ## "activo" (juego.gd) esta puesto tanto apuntando quieto como llevando el
 ## piche a mano con A/D/W/S: en los dos casos el rumbo lo decide el jugador
 ## via mira, asi que la camara sigue la mira siempre igual, sin mirar la
@@ -281,20 +293,17 @@ func objetivo_camara(dt := 0.0) -> Vector3:
 		# El desvio es fijo, asi que en el muelle caia dentro del casco o de un
 		# galpon y el plano entero (2.4 s) se veia desde dentro de una pared:
 		# pasa por el mismo rayo que las demas ramas.
-		return _sin_pared(_bola.global_position, _bola.global_position + cine_offset)
+		return _sin_pared(origen_camara(), _bola.global_position + cine_offset)
 	if activo:
 		var atras := CAM_ATRAS_JAULA if enjaulado else CAM_ATRAS_TIRO
-		var alto := CAM_ALTO_JAULA if enjaulado else CAM_ALTO
-		var desde := _bola.global_position + Vector3.UP * alto
-		var objetivo := desde - Vector3(sin(mira), 0, cos(mira)) * atras
-		return _sin_pared(desde, objetivo)
+		var desde := origen_camara()
+		return _sin_pared(desde, desde - Vector3(sin(mira), 0, cos(mira)) * atras)
 	var plana := Vector3(_bola.linear_velocity.x, 0, _bola.linear_velocity.z)
 	if plana.length() > CAM_UMBRAL_QUIETO:
 		_dir_camara = _girar_hacia(_dir_camara, plana.normalized(), CAM_GIRO_MAX * dt)
 	var t := _factor_velocidad()
-	var desde := _bola.global_position + Vector3.UP * CAM_ALTO
-	var objetivo := desde - _dir_camara * lerpf(CAM_ATRAS_MIN, CAM_ATRAS_MAX, t)
-	return _sin_pared(desde, objetivo)
+	var desde := origen_camara()
+	return _sin_pared(desde, desde - _dir_camara * lerpf(CAM_ATRAS_MIN, CAM_ATRAS_MAX, t))
 
 
 ## Trae la camara para adelante si entre "desde" (pegado al piche) y el punto
@@ -376,6 +385,14 @@ func _mover_camara(dt: float) -> void:
 	var paso := _paso(CAM_SUAVIZADO, dt)
 	_camara.global_position = _camara.global_position.lerp(objetivo_camara(dt), paso)
 	_mirada = _mirada.lerp(_mirada_deseada(), paso)
+	# El rayo de objetivo_camara() solo protege el OBJETIVO: cuando una pared
+	# se mete de golpe entre el piche y la camara (doblar una esquina, un drop,
+	# un corte de cine), el objetivo salta al punto seguro pero la camara tarda
+	# ~1/CAM_SUAVIZADO s en llegar, y ese camino lo hacia POR DENTRO de la
+	# pared -medido: rachas de 8 a 16 frames, hasta 5.5 m de hondo-. Se vuelve
+	# a clavar la posicion REAL: entrar al punto seguro es instantaneo, salir
+	# sigue suave porque el lerp de arriba no se toca.
+	_camara.global_position = _sin_pared(origen_camara(), _camara.global_position)
 	_camara.look_at(_mirada)
 	# en cine el fov se queda quieto: el plano es una composicion fija, y como
 	# el guion sube la bola de 2.6 a 22 m/s, el ensanchado por velocidad metia

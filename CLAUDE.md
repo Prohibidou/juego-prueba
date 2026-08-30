@@ -21,7 +21,7 @@ piche y la intro:
 
 ```
 "/c/Users/ivanu/Downloads/Godot_v4.6.3-stable_win64.exe/Godot_v4.6.3-stable_win64.exe" \
-  --headless --path . res://escenas/Juego.tscn --quit-after 4500
+  --headless --path . res://escenas/Juego.tscn --quit-after 12000
 ```
 
 La escena principal del proyecto es `Menu.tscn`, que no carga nada: sin nombrar

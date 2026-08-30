@@ -744,6 +744,71 @@ func _empujar(dir: Vector3) -> Vector3:
 	return _jaula.global_transform.affine_inverse() * bola.global_position
 
 
+## La camara no se mete en las paredes. El rayo de golpe.gd protege el objetivo
+## Y la posicion real: aqui se provoca el caso que lo rompia -una pared que
+## APARECE entre el piche y la camara- y se cuenta cuantos frames queda la
+## camara tapada. Conducir contra una pared plana no basta para reproducirlo
+## (el camino del lerp entre dos puntos legales no la cruza): hace falta que el
+## piche cambie de lado, que es lo que pasa al doblar una esquina o en un drop.
+## Se usa la pared del galpon que hay en diagonal al tee, buscada por rayo como
+## el bloque del casco. Solo en headless: mueve la bola y corta la camara.
+func _probar_camara() -> void:
+	var t := campo.pos_tee()
+	var ojo: Vector3 = t + Vector3.UP * golpe.CAM_ALTO
+	var esp := get_world_3d().direct_space_state
+	var q := PhysicsRayQueryParameters3D.create(ojo, ojo + Vector3(1, 0, 1).normalized() * 8.0)
+	q.exclude = campo.excluir
+	var choque := esp.intersect_ray(q)
+	assert(not choque.is_empty(), "no aparece la pared del galpon en diagonal al tee")
+	var pared: Vector3 = choque["position"]
+	assert(absf(choque["normal"].y) < 0.5, "el rayo del tee no da en una pared vertical")
+	var n := Vector3(choque["normal"].x, 0.0, choque["normal"].z).normalized()
+	print("camara: pared a %.2f m del tee, normal %s" % [pared.distance_to(ojo), str(n)])
+
+	# piso a los DOS lados, con el techo del rayo justo encima del suelo: por si
+	# esa zona queda bajo un alero, que el rayo por defecto pararia en el techo
+	var piso_a := campo.altura_terreno(pared.x + n.x * 5.0, pared.z + n.z * 5.0, t.y + 1.6)
+	var piso_b := campo.altura_terreno(pared.x - n.x * 0.8, pared.z - n.z * 0.8, t.y + 1.6)
+	assert(absf(piso_a - t.y) < 1.0 and absf(piso_b - t.y) < 1.0,
+		"no hay piso a ambos lados de la pared para la prueba de camara")
+
+	# lado A: piche delante de la pared, mirandola de frente (la camara queda a
+	# su espalda, hacia el lado abierto), y un encuadre legal ya asentado. La
+	# bola viene congelada y quieta del bloque anterior, asi que activo sigue
+	# puesto y la camara esta en modo mira.
+	bola.global_position = Vector3(pared.x + n.x * 5.0, piso_a + Util.RADIO, pared.z + n.z * 5.0)
+	await get_tree().process_frame     # que _process saque a golpe de "enjaulado"
+	golpe.mira = atan2(-n.x, -n.z)
+	golpe.encuadrar()
+	for i in 10:
+		await get_tree().process_frame
+
+	# lado B: el piche cruza al otro lado; la camara real quedo del lado viejo y
+	# tiene que cruzar EN SECO, no arrastrarse por dentro de la pared. Sin el
+	# clamp de la posicion real se median 16 frames tapada y 5.5 m de hondo; con
+	# el clamp, cero. Se miran 40 frames: el lerp converge en ~12, el resto es
+	# colchon para que el numero no dependa del dt de la maquina.
+	bola.global_position = Vector3(pared.x - n.x * 0.8, piso_b + Util.RADIO, pared.z - n.z * 0.8)
+	var tapada := 0
+	var hondo := 0.0
+	for i in 40:
+		await get_tree().process_frame
+		var desde: Vector3 = golpe.origen_camara()
+		var q2 := PhysicsRayQueryParameters3D.create(desde, camara.global_position)
+		q2.exclude = campo.excluir
+		var tapa := esp.intersect_ray(q2)
+		if tapa:
+			tapada += 1
+			hondo = maxf(hondo, tapa["position"].distance_to(camara.global_position))
+	print("camara: tapada en %d de 40 frames, hasta %.2f m detras de la pared" % [tapada, hondo])
+	assert(tapada <= 1, "la camara se arrastra por dentro de la pared en vez de cruzar en seco")
+
+	# se deja todo como arranca un hoyo: bola en el tee, mira a la bandera
+	_poner_bola(campo.pos_tee())
+	golpe.reset(campo.pos_tee(), campo.pos_bandera())
+	golpe.encuadrar()
+
+
 func _tecla(codigo: Key, apretada: bool) -> void:
 	var e := InputEventKey.new()
 	e.keycode = codigo
@@ -892,3 +957,4 @@ func _self_check() -> void:
 		print("casco: disparada a 26 m/s, la bola pasa %.2f m del plano del casco" % tras)
 		assert(tras < 1.0, "la bola atraviesa el casco del barco")
 		_poner_bola(campo.pos_tee())
+		await _probar_camara()
