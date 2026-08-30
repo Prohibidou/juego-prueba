@@ -868,3 +868,27 @@ func _self_check() -> void:
 		# despues depende del mapa -en el muelle hay un galpon a dos pasos- y
 		# eso no es cosa de esta comprobacion.
 		assert(d > 1.45, "el impulso revento la puerta pero no salio")
+		# el barco es trimesh (ver campo.preparar): del tunel por el casco fino
+		# a alta velocidad se ocupa el CCD del piche. Se dispara la bola contra
+		# el costado y se mira GEOMETRIA (cuanto pasa del plano del casco), no
+		# contactos, que a esa velocidad el CCD no reporta.
+		var costado := Vector3(t.x - 12.0, 172.0, t.z + 12.0)   # sobre el mar
+		var frente_casco := Vector3(t.x, 172.0, t.z)            # bajo cubierta
+		var esp := get_world_3d().direct_space_state
+		var q := PhysicsRayQueryParameters3D.create(costado, frente_casco)
+		q.exclude = campo.excluir
+		var casco := esp.intersect_ray(q)
+		assert(not casco.is_empty(), "el rayo al costado no encuentra el casco")
+		var plano: Vector3 = casco["position"]
+		var dir := (frente_casco - costado).normalized()
+		bola.freeze = false
+		bola.global_position = costado
+		bola.linear_velocity = dir * 26.0   # el vector ENTERO, ver CLAUDE.md
+		quieto = false
+		var tras := 0.0
+		for i in 90:
+			await get_tree().physics_frame
+			tras = maxf(tras, (bola.global_position - plano).dot(dir))
+		print("casco: disparada a 26 m/s, la bola pasa %.2f m del plano del casco" % tras)
+		assert(tras < 1.0, "la bola atraviesa el casco del barco")
+		_poner_bola(campo.pos_tee())

@@ -15,6 +15,11 @@ class_name Jaula
 ## Los muros son macizos y no la malla del modelo. Los barrotes tienen hueco
 ## entre ellos y el piche mide 4 cm: con la malla, la jaula era un colador.
 ## Solo se sale por la puerta, este entera o ya tirada.
+##
+## Muros Y TAPA bajan medio metro por debajo del origen: la jaula apoya donde
+## pega el rayo de altura, pero el suelo de verdad (la cubierta del barco) es
+## irregular y queda mas bajo alrededor. Cuando la tapa arrancaba en y=0, esa
+## rendija era una salida: el piche pasaba por debajo andando.
 
 ## El vigilado atraveso la puerta. Llega la direccion de salida, ya aplanada.
 signal reventada(fuera: Vector3)
