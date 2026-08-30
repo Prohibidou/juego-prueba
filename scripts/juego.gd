@@ -578,7 +578,9 @@ func _physics_process(dt: float) -> void:
 		# culpa del mapa, no del jugador.
 		if mapa.perdida(piche.global_position):
 			_aviso("¡Al agua!", 1.2)
-			_poner_piche(_firme)
+			# la caja del barco si el mapa la trae (Rescate en Muelle.tscn); sin
+			# ella -el Cerro, sin barco- lo de antes: el ultimo suelo firme
+			_poner_piche(mapa.pos_rescate() if mapa.tiene_rescate() else _firme)
 			return
 		# _firme solo se toma APOYADO en suelo jugable: durante la caida por un
 		# hueco el piche sigue "quieto" (andando) y sin este resguardo _firme
@@ -607,7 +609,9 @@ func _physics_process(dt: float) -> void:
 	# agua. Sin sistema de penalizacion (ver _destrabar), repone sin costo.
 	if mapa.perdida(pos) and not _empujando:
 		_aviso("¡Al agua!", 1.4)
-		_poner_piche(_desde)
+		# idem: la caja del barco si el mapa la trae, si no el punto de partida
+		# del impulso, que es lo que ya hacia esto antes del marcador Rescate
+		_poner_piche(mapa.pos_rescate() if mapa.tiene_rescate() else _desde)
 		return
 
 	if mapa.llego(pos, vel):
@@ -1647,22 +1651,24 @@ func _self_check() -> void:
 				Vector2(972, 724), Vector2(972, 728), Vector2(972, 732)]:
 			var h := mapa.altura_terreno(punto.x, punto.y, 170.0)
 			assert(h > 166.3, "el muelle sigue teniendo huecos en (%s): h=%.2f" % [str(punto), h])
-		# la red de rescate: parado en el agua, el piche vuelve solo al ultimo suelo firme
-		# el punto firme del test va FUERA de la jaula y APOYADO por rayo: la
-		# red repone con _poner_piche(_firme), que reapoya por rayo, y dentro
-		# de la jaula el rayo miente (pela la plataforma y da la cubierta, 3 m
-		# abajo del piso del artista): tomando la salida como punto firme, el
-		# piche "volvia" al mismo x/z pero 3 m mas abajo y el assert fallaba
-		_poner_piche(mapa.pos_salida() + _jaula.fuera() * 3.0)
-		var firme_antes := _firme
+		# la red de rescate: parado en el agua, el piche vuelve a la caja del
+		# barco (marcador Rescate, hijo de Salida en Muelle.tscn), no al
+		# ultimo suelo firme. Antes esto reponia en _firme, pero eso podia ser
+		# el mismo hueco del casco por el que se cayo; mapa.pos_rescate() solo
+		# existe en mapas con ese marcador (ver tiene_rescate en mapa.gd) -sin
+		# el, como en el Cerro, sigue valiendo _firme/_desde-.
+		_poner_piche(mapa.pos_salida() + _jaula.fuera() * 3.0)   # estado limpio antes de forzar la caida
 		piche.global_position = Vector3(900.0, mapa.NIVEL_PERDIDO - 0.1, 750.0)
 		piche.freeze = false
 		quieto = true
 		for i in 10:
 			await get_tree().physics_frame
 		print("rescate: desde el agua vuelve a %s" % str(piche.global_position.round()))
-		assert(piche.global_position.distance_to(firme_antes) < 2.0,
-			"el piche no vuelve del agua")
+		assert(mapa.tiene_rescate(), "el muelle no trae el marcador Rescate")
+		assert(piche.global_position.distance_to(mapa.pos_rescate()) < 1.0,
+			"el piche no vuelve a la caja del barco")
+		# fuera de la jaula: con la puerta ya tirada, reaparecer adentro traba
+		assert(not _en_la_jaula(), "el rescate lo repone dentro de la jaula")
 
 		# Que el juego LLAME al sonido, no solo que el sonido cargue. Los
 		# enganches son una linea suelta en medio de _process o de _saltar: se

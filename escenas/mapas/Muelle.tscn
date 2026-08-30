@@ -266,6 +266,10 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1010.1026, 170.38731, 569.820
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1020, 165, 821.3)
 gizmo_extents = 4.0
 
+[node name="Rescate" type="Marker3D" parent="Salida" unique_id=560213947]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.0, 0, 0)
+gizmo_extents = 0.5
+
 [node name="ColisionMuelle" type="Node3D" parent="."]
 
 [node name="TramoAncho" type="StaticBody3D" parent="ColisionMuelle"]
