@@ -111,6 +111,7 @@ var _jaula_mapa := Transform3D.IDENTITY
 # que mira la camara, lo que mide el HUD y hacia donde apunta la salida.
 var _punto_meta := Vector3.ZERO
 var _mar := NAN                 # altura de la superficie del agua; NAN si el mapa no trae mar
+var _olas: Mar = null           # el plano de olas visual; lo busca preparar(), null si no hay
 var _techo := TECHO             # el de verdad lo mide preparar() con la caja del mapa
 var animales: Array = []
 var basura: Array = []
@@ -147,6 +148,16 @@ func preparar() -> void:
 		# sin cinematica; pero si nadie lo movio, arrancaria en el origen.
 		push_error("%s: no trae malla '%s' ni tiene el marcador Salida colocado"
 			% [name, JAULA])
+
+	# Plataformas_mar trae los siete tablones del muelle fundidos en UNA sola
+	# malla estatica: no hay como moverlos por separado desde ahi. Los
+	# reemplazan las instancias de PlataformaMovil.tscn en Plataformas/,
+	# copiadas de la misma geometria pero sueltas y con su propio vaiven. Se
+	# borra aca por lo mismo que el marcador de la jaula: un nodo de dentro de
+	# una instancia no se puede sacar en el editor.
+	var plataformas_viejas := _escenario.find_child("Plataformas_mar", true, false)
+	if plataformas_viejas:
+		plataformas_viejas.queue_free()
 	await get_tree().process_frame   # que el marcador se haya ido antes de colisionar
 
 	# ponytail: la colision se genera en cada arranque y son varios segundos
@@ -159,6 +170,17 @@ func preparar() -> void:
 	# (mastiles, gruas) y subir el techo de los rayos por encima de eso.
 	var caja := _aabb(_escenario)
 	_techo = caja.position.y + caja.size.y + MARGEN_TECHO
+
+	# El oleaje visual (si el mapa lo trae). Se le PRESENTA a cada chapa
+	# (llamada hacia abajo): asi ellas no salen a buscar a nadie con
+	# get_node("..") y la escena del tablon sigue montandose sola. Sin
+	# MarOlas -un mapa sin mar, como el Cerro- las plataformas siguen
+	# funcionando, solo que sin flotar (ver plataforma_movil.gd).
+	_olas = get_node_or_null("MarOlas") as Mar
+	if _olas != null:
+		for t in get_tree().get_nodes_in_group("plataformas"):
+			if t.has_method("flotar_en"):
+				t.flotar_en(_olas)
 
 	var n := 0
 	for m: MeshInstance3D in _mallas(_escenario):

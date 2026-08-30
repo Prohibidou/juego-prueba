@@ -1,0 +1,16 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" uid="uid://ct0uv5yogt6qm" path="res://escenas/piezas/caja_malla.tres" id="1_malla"]
+[ext_resource type="Material" path="res://escenas/piezas/caja_madera.tres" id="2_mat"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_caja"]
+size = Vector3(0.44705, 0.556897, 0.44705)
+
+[node name="Caja" type="StaticBody3D"]
+
+[node name="Forma" type="CollisionShape3D" parent="."]
+shape = SubResource("BoxShape3D_caja")
+
+[node name="Malla" type="MeshInstance3D" parent="."]
+mesh = ExtResource("1_malla")
+material_override = ExtResource("2_mat")

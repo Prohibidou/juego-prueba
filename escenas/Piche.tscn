@@ -43,5 +43,6 @@ initial_velocity_max = 4.0
 scale_amount_min = 0.5
 scale_amount_max = 1.5
 
-[node name="Vista" type="Node3D" parent="." unique_id=1896370223 instance=ExtResource("1_ubphf")]
+[node name="Vista" parent="." unique_id=1896370223 instance=ExtResource("1_ubphf")]
+physics_interpolation_mode = 2
 top_level = true

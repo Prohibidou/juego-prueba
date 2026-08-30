@@ -284,11 +284,19 @@ func _preparar_modelo(raiz: Node3D) -> AABB:
 ## en el punto de contacto de el piche. Antes el levante iba en ejes de el piche y
 ## al rodar apuntaba hacia abajo: por eso se hundia en el mapa.
 func _escalar_vista(dist: float, dt := 0.0) -> void:
+	# Vista es top_level y se escribe a mano en cada frame de render, asi que
+	# no la interpola el motor (queda en physics_interpolation_mode OFF): la
+	# suavidad sale de leer ACA la posicion YA interpolada del piche en vez
+	# del valor crudo a 60 Hz de fisica. Sin esto, el piche (y cualquier cosa
+	# que lo lleve, como una plataforma movil) se veia a saltos -"ghosting"-
+	# aunque physics_interpolation este prendido, porque top_level ignora la
+	# interpolacion normal de padre a hijo.
+	var pos_piche := piche.get_global_transform_interpolated().origin
 	var alto := 2.0 * dist * tan(deg_to_rad(camara.fov) * 0.5)
 	var e := clampf(VISTA_PANTALLA * alto, Util.RADIO * 2.0, VISTA_MAX) / _diam_piche
 	var base := _rodar(e, dt).scaled(Vector3.ONE * e)
 	var caja := Transform3D(base, Vector3.ZERO) * _caja_piche
-	vista.global_transform = Transform3D(base, piche.global_position - Vector3(
+	vista.global_transform = Transform3D(base, pos_piche - Vector3(
 		caja.get_center().x, caja.position.y + Util.RADIO, caja.get_center().z))
 
 
@@ -506,9 +514,16 @@ func _process(dt: float) -> void:
 	# Que el piche no se pierda de vista. Parada se dibuja a tamano real, que es
 	# cuando la camara esta encima y se vería un melon al lado del palo; en
 	# juego se agranda con la distancia, de modo que ocupa siempre lo mismo.
-	_escalar_vista(camara.global_position.distance_to(piche.global_position), dt)
+	_escalar_vista(camara.global_position.distance_to(
+		piche.get_global_transform_interpolated().origin), dt)
 
 	barra.value = impulso.fuerza * 100.0
+	# El bloque de estadisticas se apaga desde la escena (UI/Hud, visible). Es
+	# un panel de depuracion -zona, viento, dispersion, metros- que tapaba
+	# media pantalla; oculto no hace falta ni armar la cadena, que se rehacia
+	# entera en CADA frame. Para volver a verlo alcanza con la casilla visible.
+	if not hud.visible:
+		return
 	var p := piche.global_position
 	var b := mapa.pos_meta()
 	var dist := Vector2(p.x - b.x, p.z - b.z).length()
@@ -531,6 +546,16 @@ func _process(dt: float) -> void:
 func _physics_process(dt: float) -> void:
 	if not listo or llegado:
 		return
+
+	# si esta parado sobre una plataforma movil, lo arrastra ESTE tick antes
+	# que nada mas: _conducir() mas abajo congela al piche en cuanto sueltan el
+	# mando, y un piche congelado no lo mueve ni la friccion ni el
+	# sync_to_physics del AnimatableBody3D (medido: se quedaba quieto y la
+	# plataforma se le escapaba de abajo entera). Por eso esto es geometria
+	# -un rayo corto hacia abajo-, no contacto: funciona este quieto o no.
+	var plataforma := _sobre_plataforma()
+	if plataforma:
+		piche.global_position += plataforma.empuje()
 
 	# el impulso se aplica aqui: descongelar y empujar en el mismo tick de fisica
 	if _v_pendiente != Vector3.ZERO:
@@ -666,10 +691,43 @@ func _physics_process(dt: float) -> void:
 				# jugador se quedaria encerrado
 				_jaula.tirar_puerta(PORTAZO_EMPUJE, PORTAZO_SUELTA)
 				_jaula.abrir()
-			_aviso("%d m" % roundi(_ultimo), 1.6)
+			# `_ultimo` se sigue midiendo (lo usan el marcador y la tarjeta),
+			# pero ya no se canta en pantalla: sobraba el cartel de metros al
+			# frenar despues de cada impulso.
 	else:
 		_t_lento = 0.0
 		_t_caida = 0.0
+
+
+## Rayo corto hacia abajo desde el piche: hay algo SOLIDO justo debajo, sea el
+## muelle, una plataforma o el mar -que colisiona a proposito, ver mapa.gd-.
+## Geometria, no contactos -misma razon que la jaula no usa
+## get_colliding_bodies(), ver CLAUDE.md-.
+func _apoyado() -> bool:
+	var esp := get_world_3d().direct_space_state
+	var desde := piche.global_position
+	var q := PhysicsRayQueryParameters3D.create(
+		desde, desde + Vector3.DOWN * (Util.RADIO + 0.12))
+	q.exclude = mapa.excluir
+	return not esp.intersect_ray(q).is_empty()
+
+
+## Rayo corto hacia abajo desde el piche: si lo que pisa esta en el grupo
+## "plataformas", ese es el tablon que lo sostiene. Geometria, no contactos
+## -misma razon que _apoyado() de arriba.
+func _sobre_plataforma() -> Node3D:
+	var esp := get_world_3d().direct_space_state
+	var desde := piche.global_position
+	var q := PhysicsRayQueryParameters3D.create(
+		desde, desde + Vector3.DOWN * (Util.RADIO + 0.15))
+	q.exclude = mapa.excluir
+	var hit := esp.intersect_ray(q)
+	if hit.is_empty():
+		return null
+	var cuerpo: Object = hit.get("collider")
+	if cuerpo is Node3D and (cuerpo as Node3D).is_in_group("plataformas"):
+		return cuerpo as Node3D
+	return null
 
 
 ## El stick izquierdo rueda el piche mientras esta parado. En el aire ese mismo
@@ -686,10 +744,25 @@ func _conducir(dt: float) -> void:
 		# En pleno brinco no: el salto no saca de "quieto", asi que soltar el
 		# stick en el aire dejaba al piche congelado a media altura.
 		_vel_andar = 0.0
-		if not piche.freeze and not _saltando:
-			piche.linear_velocity = Vector3.ZERO
-			piche.angular_velocity = Vector3.ZERO
-			piche.freeze = true
+		if _saltando:
+			return
+		# ...pero congelar SOLO si hay suelo debajo. Sin esa condicion, quien se
+		# camina del borde del muelle o de una plataforma y suelta el mando se
+		# quedaba flotando en el aire: congelado no le entra la gravedad, y
+		# nada volvia a descongelarlo hasta el proximo impulso.
+		if _apoyado():
+			if not piche.freeze:
+				piche.linear_velocity = Vector3.ZERO
+				piche.angular_velocity = Vector3.ZERO
+				piche.freeze = true
+				_aplicar_damp()      # al pisar vuelve el rozamiento del suelo
+		else:
+			# En el aire manda la gravedad, no el hielo. Y el damp se pone a
+			# cero: es el del SUELO (cesped, chapa) y dejarlo puesto mientras
+			# caes frena la caida a ~1 m/s, que es la otra mitad de por que el
+			# piche "flotaba" al salirse del muelle.
+			piche.freeze = false
+			piche.linear_damp = 0.0
 		return
 	piche.freeze = false      # congelada no admite fuerzas
 	# la velocidad de andar la lleva ESTA variable, no lo que traiga ya
@@ -1171,6 +1244,14 @@ func _check_mapa() -> void:
 		assert(not mapa.hay_agua(t.x, t.z), "la salida se toma por agua: sonaria a chapuzon")
 		assert(mojados > 0, "no se reconoce el mar en ningun lado: nunca sonaria el chapuzon")
 		assert(secos > 0, "todo el mapa se toma por agua")
+		# la ola de verdad: MarOlas tiene el script puesto (si no, las chapas
+		# flotan al garete sin seguir ninguna ola, ver plataforma_movil.gd) y
+		# responde con una altura acotada por su propia amplitud
+		var olas := mapa.find_child("MarOlas", true, false)
+		assert(olas is Mar, "MarOlas no tiene el script de olas puesto")
+		var cresta: float = (olas as Mar).altura(t.x, t.z)
+		assert(absf(cresta) <= (olas as Mar).amplitud + 0.001,
+			"la ola da una altura mayor que su propia amplitud")
 	print("mapa %d/%d %s: salida %s | meta %s | %d m%s"
 		% [indice + 1, mapas.size(), mapa.name, str(t.round()), str(b.round()),
 		   roundi(Vector2(t.x - b.x, t.z - b.z).length()),
@@ -1342,6 +1423,81 @@ func _self_check() -> void:
 	# Las pruebas de abajo mueven el piche de verdad y son del MUELLE: la jaula
 	# fisica y el casco del barco. En otro mapa no hay ni una cosa ni la otra.
 	if DisplayServer.get_name() == "headless" and mapa.tiene_jaula():
+		# las plataformas del muelle: si no se movieran, esto se quedaria en
+		# 0.00 pese a que _physics_process corre igual, porque no compara nada
+		# contra el propio origen de cada una. Se mide ACA, antes del portazo:
+		# _cine_portazo() mas abajo pone Engine.time_scale en camara lenta sin
+		# esperarlo (dispara y sigue), y el vaiven usa delta escalado a
+		# proposito (ver plataforma_movil.gd) para no desincronizarse con el
+		# resto del juego en cine lento -medido ahi, esto daba 0.00 sin que
+		# las plataformas tuvieran nada roto.
+		var tablones := get_tree().get_nodes_in_group("plataformas")
+		# no se clava el numero: la cadena de chapas se alarga y se acorta al
+		# disenar el salto, y un assert con el total exacto solo obliga a venir a
+		# tocarlo aca cada vez sin atrapar ningun error de verdad
+		assert(tablones.size() >= 4, "faltan tablones del muelle")
+		# que cada tablon TENGA la chapa puesta. Esto no es cosmetico: el molde
+		# trae un BoxMesh de relleno, y cuando una instancia se queda con ese
+		# placeholder la plataforma se dibuja como un cubo de 4 m -paso, y los
+		# asserts de movimiento no lo vieron porque moverse, se movia igual-.
+		for p in tablones:
+			var malla := (p as Node3D).get_node("Malla") as MeshInstance3D
+			assert(malla.mesh is ArrayMesh,
+				"%s se quedo con la malla de relleno en vez de la chapa" % p.name)
+		# un delta en ventana fija (1 s) servia con periodo=6, pero con
+		# periodo=3 esa misma ventana es un tercio del ciclo: segun la fase en
+		# que arranca el chequeo puede caer cerca de un pico (poco desplazamiento
+		# neto) sin que la plataforma tenga nada roto -midio 0.90 una vez con
+		# amplitud 2.5, muy por debajo de lo esperado, y no era regresion.
+		# Barrer minimo a maximo durante UN CICLO COMPLETO no depende de la fase.
+		var referencia: Node3D = tablones[0]
+		var periodo_ref: float = referencia.periodo
+		var minimo := referencia.position
+		var maximo := referencia.position
+		var ticks := roundi(periodo_ref * Engine.physics_ticks_per_second) + 5
+		for i in ticks:
+			await get_tree().physics_frame
+			minimo = minimo.min(referencia.position)
+			maximo = maximo.max(referencia.position)
+		var barrido := minimo.distance_to(maximo)
+		print("plataformas: en un ciclo (%.1f s) barren %.2f m" % [periodo_ref, barrido])
+		assert(barrido > 1.0, "las plataformas del muelle no se mueven")
+
+		# y el piche tiene que IRSE con la plataforma que lo sostiene: un
+		# AnimatableBody3D con sync_to_physics (el default) empuja al que se le
+		# apoya encima solo con que este script le reescriba position, pero eso
+		# no se prueba solo, se mide contra el mundo
+		var tablon: Node3D = tablones[0]
+		var forma: CollisionShape3D = tablon.get_node("Forma")
+		# la caja de colision no siempre esta centrada en el origen del tablon
+		# (en las chapas va corrida medio alto hacia arriba, para que su base
+		# quede a ras de la malla, que arranca en y=0): sumar el offset de
+		# Forma o el piche largaba por debajo de la superficie real. Y ese
+		# offset esta en ejes LOCALES del tablon: si el tablon esta escalado
+		# (las chapas van a 4x para el tamano de las plataformas del muelle),
+		# hay que escalarlo tambien -"position no lleva la escala del nodo"-.
+		var alto: float = (forma.position.y + (forma.shape as BoxShape3D).size.y * 0.5) \
+			* tablon.scale.y
+		piche.freeze = false
+		piche.global_position = tablon.global_position + Vector3(0, alto + Util.RADIO + 0.02, 0)
+		piche.linear_velocity = Vector3.ZERO
+		for i in 10:
+			await get_tree().physics_frame   # que se asiente el contacto
+		var relativo_antes := piche.global_position - tablon.global_position
+		for i in 90:
+			await get_tree().physics_frame
+		var relativo_despues := piche.global_position - tablon.global_position
+		var deriva := Vector2(relativo_despues.x - relativo_antes.x,
+			relativo_despues.z - relativo_antes.z).length()
+		print("plataforma movil: en 1.5 s el piche se separa %.2f m del tablon" % deriva)
+		assert(deriva < 0.5, "el piche no viaja con la plataforma: se queda atras")
+
+		# se deja todo como lo espera _probar_jaula(): el piche adentro,
+		# quieto, y la jaula remontada entera
+		_poner_piche(mapa.pos_salida(), false)
+		_montar_jaula()
+		impulso.reset(mapa.pos_salida(), mapa.pos_meta())
+
 		await _probar_jaula()
 		await get_tree().create_timer(0.5).timeout
 		impulso.activo = true      # soltar() sale de vacio si no hubo cargar()
