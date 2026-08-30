@@ -26,7 +26,7 @@ size = Vector3(0.3, 2.1498, 0.5518)
 size = Vector3(0.3, 0.1956, 0.8963)
 
 [sub_resource type="BoxShape3D" id="B_tapa"]
-size = Vector3(0.1224, 1.4542, 0.8963)
+size = Vector3(0.1224, 1.9542, 0.8963)
 
 [node name="Jaula" type="Node3D"]
 script = ExtResource("1_jaula")
@@ -84,7 +84,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.15, 1.552, 0)
 shape = SubResource("B_dintel")
 
 [node name="Tapa" type="StaticBody3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.891753, 0.727118, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.891753, 0.477118, 0)
 
 [node name="Forma" type="CollisionShape3D" parent="Tapa"]
 shape = SubResource("B_tapa")

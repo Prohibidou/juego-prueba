@@ -122,38 +122,25 @@ func preparar() -> void:
 
 	var n := 0
 	for m: MeshInstance3D in _mallas(_curso):
-		if m.name == "Barco":
-			# un ConcavePolygonShape3D (el trimesh de siempre) es para suelo
-			# quieto: contra un cuerpo rigido rapido puede dejarlo atravesar,
-			# sobre todo en una carcasa fina como un casco. Con varios cascos
-			# convexos (V-HACD) el piche ya no se cuela. Con los ajustes por
-			# defecto cada casco infla un poco de mas alla de la malla real
-			# (queda "hinchado"): eso dejaba la cubierta solida mas arriba
-			# que la cubierta que se ve, y la jaula flotaba sobre el barco en
-			# vez de pisarlo. project_hull_vertices pega los vertices del
-			# casco a la malla real; max_concavity bajo y mas cascos hacen
-			# que le cueste mas alejarse de la forma original.
-			#
-			# Se probo pasar esto a trimesh liso (mas simple, y en teoria mas
-			# fiel a la malla real): rompia el ajuste de la jaula, que esta
-			# calibrada sobre ESTA cubierta inflada -el tee bajaba 5 m y la
-			# puerta dejaba de frenar a la bola andando. Se queda como estaba.
-			var ajuste := MeshConvexDecompositionSettings.new()
-			ajuste.max_concavity = 0.001
-			ajuste.resolution = 400000
-			ajuste.max_convex_hulls = 32
-			ajuste.project_hull_vertices = true
-			m.create_multiple_convex_collisions(ajuste)
-		else:
-			m.create_trimesh_collision()
+		# El barco tambien va con trimesh. Se probo descomponerlo en cascos
+		# convexos (V-HACD, 32 cascos) por miedo a que la bola atravesara el
+		# casco fino, pero un convexo no puede tener huecos: los cascos
+		# rellenaban las concavidades del barco y eso metia COLISION DONDE NO
+		# SE VE NADA -un muro invisible a 3 m del tee camino a la meta (49
+		# celdas fantasma en la linea de juego, medidas a rayos), y la
+		# cubierta solida un metro por encima de la que se dibuja, con el
+		# piche flotando. Del tunelado por el casco fino se encarga Jolt con
+		# el continuous_cd de la bola: en 36 tiros de barrido no atraveso ni
+		# una vez. OJO: trimesh aqui exige la tapa de la jaula hundida bajo
+		# el piso (Jaula.tscn): sobre la cubierta real, irregular, la bola se
+		# colaba por la rendija entre tapa y suelo y "la puerta no paraba".
+		m.create_trimesh_collision()
 		# Un trimesh choca solo por el lado de las normales (backface_collision
 		# arranca en false, y desde Godot 4.5 Jolt lo respeta de verdad). Medio
-		# mapa esta modelado a una cara -galpones, silos-, asi que la bola
-		# atravesaba esas paredes al pegarles "desde atras", y el CCD no la
-		# salva porque su cast respeta el mismo flag. Doble cara y listo. Los
-		# cascos convexos del barco no tienen esta propiedad -un convexo no
-		# tiene "el otro lado"-, el chequeo de tipo los salta solo. Los rayos
-		# de altura no cambian: hit_back_faces ya venia en true.
+		# mapa esta modelado a una cara -galpones, silos, el casco-, asi que la
+		# bola atravesaba esas paredes al pegarles "desde atras", y el CCD no
+		# la salva porque su cast respeta el mismo flag. Doble cara y listo.
+		# Los rayos de altura NO cambian: _rayo() pide hit_back_faces=false.
 		for cuerpo in m.get_children():
 			if cuerpo is StaticBody3D:
 				for cs in cuerpo.get_children():
@@ -255,6 +242,14 @@ func _rayo(x: float, z: float, desde: float) -> float:
 		return INF
 	var q := PhysicsRayQueryParameters3D.create(Vector3(x, desde, z), Vector3(x, SUELO, z))
 	q.exclude = excluir
+	# Los rayos de altura ignoran las caras traseras A PROPOSITO. Al poner las
+	# formas a doble cara (backface_collision, para que la BOLA no atraviese
+	# paredes) los rayos tambien empezaron a ver la cara de abajo de cada
+	# superficie: el pelado de altura_suelo cruzaba el mar (el tee salia 4 m
+	# bajo el agua) y el piso de tierra (la basura se sembraba enterrada).
+	# Con esto los rayos ven lo mismo de siempre y la doble cara queda solo
+	# para los cuerpos, que es donde hace falta.
+	q.hit_back_faces = false
 	var golpe := esp.intersect_ray(q)
 	return golpe["position"].y if golpe else INF
 
