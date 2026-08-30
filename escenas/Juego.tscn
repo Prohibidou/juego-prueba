@@ -6,6 +6,7 @@
 [ext_resource type="PackedScene" uid="uid://i61txw5smhdd" path="res://escenas/Campo.tscn" id="4_4ru81"]
 [ext_resource type="Script" uid="uid://dljmkirv0dom7" path="res://scripts/campo.gd" id="5_nv0ic"]
 [ext_resource type="PackedScene" uid="uid://nv4bpr3ue734" path="res://escenas/Piche.tscn" id="6_jv425"]
+[ext_resource type="PackedScene" uid="uid://c3nqhx8vsgm1r" path="res://escenas/Sonido.tscn" id="7_sonido"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_l3i6u"]
 sky_top_color = Color(0.32, 0.55, 0.9, 1)
@@ -142,3 +143,5 @@ freeze = true
 continuous_cd = true
 contact_monitor = true
 max_contacts_reported = 4
+
+[node name="Sonido" parent="." instance=ExtResource("7_sonido")]

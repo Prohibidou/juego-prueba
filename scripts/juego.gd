@@ -136,11 +136,16 @@ var _marcas: Array = []
 @onready var msg: Label = $UI/Msg
 @onready var barra: ProgressBar = $UI/Barra
 @onready var barra_stam: ProgressBar = $UI/BarraStam
+@onready var sonido: Sonido = $Sonido
 
 
 func _ready() -> void:
 	randomize()
 	_t_arranque = Time.get_ticks_msec()
+	# suenan ya, durante la carga: la portada esta cinco segundos en pantalla
+	# y en silencio parece que el juego se colgo
+	sonido.musica(true)
+	sonido.ambiente(true)
 	_preparar_bola()
 	_conectar_tactil()
 	barra_stam.max_value = STAMINA_MAX   # el .tscn no puede leer la constante
@@ -305,6 +310,7 @@ func _ir_a_hoyo(i: int) -> void:
 
 
 func _poner_bola(donde: Vector3) -> void:
+	sonido.callar()          # si venia volando, el giro en el aire se corta aca
 	bola.freeze = true
 	bola.linear_velocity = Vector3.ZERO
 	bola.angular_velocity = Vector3.ZERO
@@ -346,6 +352,7 @@ func _drop() -> void:
 
 func _on_golpeado(velocidad: Vector3) -> void:
 	golpes += 1
+	sonido.impulso(golpe.fuerza)   # sigue puesta: golpe.gd la borra tras emitir
 	# fuerza sigue puesta: golpe.gd la borra despues de emitir
 	stamina = maxf(0.0, stamina - STAMINA_IMPULSO * golpe.fuerza)
 	_desde = bola.global_position
@@ -361,6 +368,9 @@ func _on_golpeado(velocidad: Vector3) -> void:
 func _process(dt: float) -> void:
 	if not listo:
 		return
+	# lo primero de todo: si esto quedara detras de un return, el giro en el
+	# aire se quedaria sonando con el piche ya parado
+	sonido.vuelo(bola.linear_velocity.length() if _en_aire else 0.0, dt)
 	golpe.activo = quieto and not embocada
 	# desde el rough se controla peor: el mismo dato que retiene el efecto
 	golpe.estabilidad = campo.retiene_efecto(campo.zona(
@@ -372,6 +382,7 @@ func _process(dt: float) -> void:
 
 	var cogidas := campo.recoger(bola.global_position, R_RECOGE)
 	if cogidas > 0:
+		sonido.recoger()
 		stamina = minf(STAMINA_MAX, stamina + cogidas * STAMINA_BASURA)
 		_aviso("+%d stamina" % roundi(cogidas * STAMINA_BASURA), 0.8)
 
@@ -452,6 +463,11 @@ func _physics_process(dt: float) -> void:
 	bola.linear_damp = 0.0 if volando else campo.damp_suelo() * campo.factor_damp(zona)
 	estela.emitting = volando and vel.length() > 20.0
 	if _en_aire and not volando:
+		# con la velocidad de LLEGADA, antes de que FRENO_ATERRIZAJE se la coma
+		if campo.hay_agua(pos.x, pos.z):
+			sonido.chapuzon()
+		else:
+			sonido.aterrizaje(vel.length())
 		if vel.length() > VEL_MARCA:
 			_marca(pos, vel.length())
 		# el toque de aterrizaje: como el piche cae con backspin, aqui pierde
@@ -560,6 +576,7 @@ func _saltar() -> void:
 	if _saltando or not (listo and quieto and not embocada):
 		return
 	_saltando = true
+	sonido.salto()
 	bola.freeze = false      # congelada no admite ni fuerzas ni velocidad
 	bola.linear_velocity += Vector3.UP * IMPULSO_SALTO
 
@@ -586,6 +603,7 @@ func _reventar_puerta(fuera: Vector3) -> void:
 	tw.tween_callback(func(): _empujando = false)
 	_jaula.tirar_puerta(PORTAZO_EMPUJE, PORTAZO_SUELTA)
 	_jaula.abrir()
+	sonido.portazo()
 	_cine_portazo()
 
 
@@ -652,6 +670,7 @@ func _aviso(texto: String, seg: float) -> void:
 
 func _embocar() -> void:
 	embocada = true
+	sonido.callar()
 	bola.freeze = true
 	estela.emitting = false
 	tarjeta.append(golpes)
@@ -786,6 +805,60 @@ func _self_check() -> void:
 	bola.linear_velocity = Vector3.ZERO
 	_angulo_rueda = 0.0
 	assert(campo.basura.size() > 0, "el hoyo se quedo sin basura que recoger")
+	# --- sonido ---
+	# Que este todo cargado y enrutado: si un .import se rompe o alguien
+	# renombra un bus, el juego sigue corriendo MUDO y no se entera nadie.
+	var males := sonido.revisar()
+	assert(males.is_empty(), "sonido: " + ", ".join(males))
+	# Los bucles viven en el .import, no en el codigo, asi que no se ven al leer
+	# y se pierden en cualquier reimportacion. La musica y el ambiente TIENEN que
+	# dar la vuelta; los golpes, justo al reves, o se quedan sonando para siempre.
+	for nom in ["Musica", "Olas", "Gaviotas"]:
+		var largo: AudioStreamOggVorbis = sonido.get_node(nom).stream
+		assert(largo.loop, "%s no esta en bucle" % nom)
+	var giro: AudioStreamWAV = sonido.get_node("Vuelo").stream
+	assert(giro.loop_mode == AudioStreamWAV.LOOP_FORWARD,
+		"el giro en el aire no da la vuelta: se oiria un corte cada 2.4 s")
+	for nom in ["Impulso", "Aterrizaje", "Jaula", "Chapuzon", "Boton"]:
+		var corto: AudioStreamWAV = sonido.get_node(nom).stream
+		assert(corto.loop_mode == AudioStreamWAV.LOOP_DISABLED,
+			"%s se quedaria sonando en bucle" % nom)
+	# el brinco son las tres tomas del pack original: si queda una, cansa enseguida
+	var tomas: AudioStreamRandomizer = sonido.get_node("Salto").stream
+	assert(tomas.streams_count == 3, "el brinco perdio tomas: quedan %d" % tomas.streams_count)
+	# El bucle de vuelo, por la via real -la misma llamada que hace _process-, no
+	# tocando el reproductor a mano: lo que se prueba es que arranque solo con la
+	# velocidad y, sobre todo, que se CORTE. Una bandera de _process que se queda
+	# pegada es la trampa clasica de este archivo.
+	sonido.vuelo(26.0)
+	var sonaba: bool = sonido.get_node("Vuelo").playing
+	sonido.vuelo(0.0)
+	var callado: bool = not sonido.get_node("Vuelo").playing
+	print("sonido: el giro en el aire suena a 26 m/s (%s) y calla a 0 m/s (%s)"
+		% [sonaba, callado])
+	assert(sonaba, "el giro en el aire no arranca al volar")
+	assert(callado, "el giro en el aire se queda pegado con el piche parado")
+	# El mar sale de la malla del mapa, no de un numero a mano: mover o cambiar
+	# el glb no deja el chapuzon sonando a la altura equivocada.
+	assert(not is_nan(campo.altura_mar()), "no se encontro la malla del mar en el mapa")
+	# El muelle esta A NIVEL del agua: el tee y la superficie del mar salen los dos
+	# a la misma altura, asi que distinguirlos por y es imposible y hay que
+	# preguntar por la malla. Se barre un anillo alrededor del tee y se cuenta:
+	# tiene que haber de las dos cosas, o el detector no esta distinguiendo nada.
+	var mojados := 0
+	var secos := 0
+	for r in [25.0, 55.0, 95.0]:
+		for i in 12:
+			var a := TAU * i / 12.0
+			if campo.hay_agua(t.x + cos(a) * r, t.z + sin(a) * r):
+				mojados += 1
+			else:
+				secos += 1
+	print("sonido: el mar y el tee estan los dos a y=%.2f; de 36 sondeos alrededor del tee, %d dan agua y %d dan firme"
+		% [campo.altura_mar(), mojados, secos])
+	assert(not campo.hay_agua(t.x, t.z), "el tee se toma por agua: sonaria a chapuzon")
+	assert(mojados > 0, "no se reconoce el mar en ningun lado: nunca sonaria el chapuzon")
+	assert(secos > 0, "todo el mapa se toma por agua")
 	# la meta es SUBIRSE a la camioneta: encima y posado cuenta; al lado,
 	# debajo, o pasandole por arriba a toda velocidad, no
 	# se prueba justo en el borde de la condicion de altura, no en el techo: el
@@ -892,3 +965,19 @@ func _self_check() -> void:
 		print("casco: disparada a 26 m/s, la bola pasa %.2f m del plano del casco" % tras)
 		assert(tras < 1.0, "la bola atraviesa el casco del barco")
 		_poner_bola(campo.pos_tee())
+
+		# Que el juego LLAME al sonido, no solo que el sonido cargue. Los
+		# enganches son una linea suelta en medio de _process o de _saltar: se
+		# pierden en cualquier refactor y el juego se queda mudo sin romper un
+		# solo assert. Va DENTRO del bloque de headless, y no fuera, porque lo
+		# que mueve estos contadores es la prueba de arriba: con ventana no se
+		# impulsa nada y daban cero por no haber jugado, no por estar rotos.
+		print("sonido: disparos tras la prueba -> impulso %d, salto %d, vuelo %d, aterrizaje %d, portazo %d"
+			% [sonido.disparos("impulso"), sonido.disparos("salto"),
+			   sonido.disparos("vuelo"), sonido.disparos("aterrizaje"),
+			   sonido.disparos("portazo")])
+		assert(sonido.disparos("impulso") > 0, "el impulso no avisa al sonido")
+		assert(sonido.disparos("salto") > 0, "el brinco no avisa al sonido")
+		assert(sonido.disparos("portazo") > 0, "el portazo no avisa al sonido")
+		assert(sonido.disparos("vuelo") > 0, "volando no suena el giro en el aire")
+		assert(sonido.disparos("aterrizaje") > 0, "aterrizar no suena")

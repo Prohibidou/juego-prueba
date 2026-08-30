@@ -33,6 +33,14 @@ const MARGEN_META := 0.35      # fraccion del ancho que cuenta como "encima"
 # 0.45 solo valia subirse al techo; con esto vale la caja, que es donde se
 # sube, y sigue sin valer meterse debajo del chasis.
 const ALTURA_CAJA := 0.28
+# --- el mar ---
+# El glb del muelle trae una malla llamada asi, de 700 m de lado. Como todo
+# el mapa, se le genera colision: el piche no se hunde, cae ENCIMA del agua.
+# La altura se mide de su caja al montar el campo, no se clava a mano. Y OJO:
+# no vale para saber si algo esta mojado, porque el muelle esta construido a
+# nivel del agua -el tee sale a y=164.74 y el mar tambien-: para eso esta
+# hay_agua(), que mira que malla devuelve el rayo.
+const MAR := "Mar"             # nombre de la malla dentro del glb del mapa
 const VEL_SUBIDO := 6.0        # m/s por encima de los cuales va de paso
 # ---------------------------------------
 const R_COPA := 0.054          # 108 mm de diametro
@@ -86,6 +94,7 @@ var _tee := Vector3.ZERO
 var _meta := AABB()
 var _bandera := Vector3.ZERO
 var _labio := 0.0
+var _mar := NAN                 # altura de la superficie del agua; NAN si el mapa no trae mar
 var _techo := TECHO             # el de verdad lo mide preparar() con la caja del mapa
 var animales: Array = []
 var basura: Array = []
@@ -122,6 +131,11 @@ func preparar() -> void:
 
 	var n := 0
 	for m: MeshInstance3D in _mallas(_curso):
+		if m.name == MAR:
+			# la superficie es el TECHO de su caja: la malla del agua tiene
+			# espesor y el piche se posa arriba, no en el medio
+			var cm: AABB = m.global_transform * m.get_aabb()
+			_mar = cm.position.y + cm.size.y
 		# El barco tambien va con trimesh. Se probo descomponerlo en cascos
 		# convexos (V-HACD, 32 cascos) por miedo a que la bola atravesara el
 		# casco fino, pero un convexo no puede tener huecos: los cascos
@@ -198,6 +212,27 @@ func labio_copa() -> float:
 	return _labio
 
 
+## Altura de la superficie del agua, o NAN si este mapa no tiene mar.
+func altura_mar() -> float:
+	return _mar
+
+
+## Si lo que hay bajo (x, z) es el agua y no el muelle. Sirve para saber si el
+## piche cae al mar o sobre tablas, que no suenan igual.
+##
+## Se pregunta por la MALLA que devuelve el rayo, NO por la altura: un muelle se
+## construye justo en la linea del agua, y aqui el tee y la superficie del mar
+## estan los dos a y=164.74 clavados. Con un margen de altura, medio muelle era
+## agua. `create_trimesh_collision()` cuelga el cuerpo de la malla, asi que el
+## padre del colisionador es el MeshInstance3D y trae su nombre puesto.
+func hay_agua(x: float, z: float) -> bool:
+	if is_nan(_mar):
+		return false
+	var cuerpo := _colisionador(x, z)
+	var malla := cuerpo.get_parent() if cuerpo else null
+	return malla != null and malla.name == MAR
+
+
 ## Cambia de hoyo: recoloca tee, bandera y copa. El campo no se recarga.
 func ir_a(i: int) -> void:
 	indice = i
@@ -237,9 +272,22 @@ func altura_terreno(x: float, z: float, techo := INF) -> float:
 ## mismo que encontrar suelo a la altura cero: altura_suelo necesita saber la
 ## diferencia para no seguir pelando capas cuando ya no queda nada debajo.
 func _rayo(x: float, z: float, desde: float) -> float:
+	var golpe := _tirar(x, z, desde)
+	return golpe["position"].y if golpe else INF
+
+
+## Que hay bajo (x, z), como nodo. Mismo rayo que la altura, misma exclusion y
+## mismo hit_back_faces: si divergieran, "donde apoya" y "sobre que apoya"
+## podrian contestar cosas distintas.
+func _colisionador(x: float, z: float) -> Node:
+	var golpe := _tirar(x, z, _techo)
+	return golpe["collider"] if golpe else null
+
+
+func _tirar(x: float, z: float, desde: float) -> Dictionary:
 	var esp := get_world_3d().direct_space_state
 	if esp == null:
-		return INF
+		return {}
 	var q := PhysicsRayQueryParameters3D.create(Vector3(x, desde, z), Vector3(x, SUELO, z))
 	q.exclude = excluir
 	# Los rayos de altura ignoran las caras traseras A PROPOSITO. Al poner las
@@ -250,8 +298,7 @@ func _rayo(x: float, z: float, desde: float) -> float:
 	# Con esto los rayos ven lo mismo de siempre y la doble cara queda solo
 	# para los cuerpos, que es donde hace falta.
 	q.hit_back_faces = false
-	var golpe := esp.intersect_ray(q)
-	return golpe["position"].y if golpe else INF
+	return esp.intersect_ray(q)
 
 
 ## Lo mismo que altura_terreno pero sin el apano: NAN cuando el rayo no da en
