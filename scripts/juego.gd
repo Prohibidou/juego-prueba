@@ -25,6 +25,10 @@ const AIRE_TIEMPO := 1.1    # segundos de timon por impulso
 const CONDUCE_ACEL := 7.0   # m/s2 que mete el stick izquierdo
 const CONDUCE_MAX := 4.5    # m/s: es andar, no un impulso
 const GIRO_MAX := 9.0       # rad/s: por encima de esto la vuelta es un borron
+# En el aire no hay rodada que copiar: el piche gira sobre su propio eje a
+# ritmo fijo, para que el impulso se lea como voltereta y no como una bola
+# que flota tiesa. Mas alla de GIRO_MAX la vuelta es un borron.
+@export_range(0.0, 15.0, 0.5) var GIRO_VUELO := 7.0  # rad/s de voltereta en vuelo
 # --- stamina ---
 # Se anda libre, sin radio: lo unico que cuesta stamina es el impulso (G). La
 # basura del mapa la repone: es lo que obliga a desviarse de la linea recta
@@ -201,7 +205,11 @@ func _rodar(e: float, dt: float) -> Basis:
 		_dir_rueda = plana.normalized()
 		_eje_rueda = Vector3.UP.cross(_dir_rueda)
 		var radio := _diam_piche * e * 0.5
-		if dt > 0.0 and radio > 0.0:
+		if _en_aire:
+			# la voltereta usa el mismo eje y el mismo acumulador que la
+			# rodada: el despegue y el aterrizaje no pegan saltos de angulo
+			_angulo_rueda += GIRO_VUELO * dt
+		elif dt > 0.0 and radio > 0.0:
 			_angulo_rueda += minf(plana.length() / radio, GIRO_MAX) * dt
 	elif dt > 0.0 and impulso.activo:
 		# quieto o girando en el sitio: A/D solo cambia la mira (impulso.gd), no
@@ -864,6 +872,87 @@ func _empujar(dir: Vector3) -> Vector3:
 	return _jaula.global_transform.affine_inverse() * piche.global_position
 
 
+## La camara no se mete en las paredes. El rayo de impulso.gd protege el objetivo
+## Y la posicion real: aqui se provoca el caso que lo rompia -una pared que
+## APARECE entre el piche y la camara- y se cuenta cuantos frames queda la
+## camara tapada. Conducir contra una pared plana no basta para reproducirlo
+## (el camino del lerp entre dos puntos legales no la cruza): hace falta que el
+## piche cambie de lado, que es lo que pasa al doblar una esquina o en un drop.
+## Se usa la pared del galpon que hay en diagonal a la salida, buscada por rayo
+## como el bloque del casco. Solo en headless: mueve el piche y corta la camara.
+func _probar_camara() -> void:
+	var t := mapa.pos_salida()
+	var ojo: Vector3 = t + Vector3.UP * impulso.CAM_ALTO
+	var esp := get_world_3d().direct_space_state
+	# la pared se busca barriendo azimuts: una diagonal clavada ya se rompio
+	# cuando el refactor movio la salida al marcador de la jaula. Sirve la
+	# primera pared vertical a menos de 12 m con piso llano a los DOS lados y
+	# parejo ENTRE SI (no contra t.y: la salida puede estar en alto, como ahora
+	# que va sobre la jaula, y el piche se para sobre el piso, no en la salida).
+	# El piso se mide con el techo del rayo justo encima del suelo, por si la
+	# zona queda bajo un alero que el rayo por defecto pararia antes.
+	var pared := Vector3.ZERO
+	var n := Vector3.ZERO
+	var piso_a := 0.0
+	var piso_b := 0.0
+	for paso in 16:
+		var ang := TAU * paso / 16.0
+		var dir := Vector3(sin(ang), 0.0, cos(ang))
+		var q := PhysicsRayQueryParameters3D.create(ojo, ojo + dir * 12.0)
+		q.exclude = mapa.excluir
+		var choque := esp.intersect_ray(q)
+		if choque.is_empty() or absf(choque["normal"].y) >= 0.5:
+			continue
+		var p: Vector3 = choque["position"]
+		var nn := Vector3(choque["normal"].x, 0.0, choque["normal"].z).normalized()
+		var a := mapa.altura_terreno(p.x + nn.x * 5.0, p.z + nn.z * 5.0, t.y + 1.6)
+		var b := mapa.altura_terreno(p.x - nn.x * 0.8, p.z - nn.z * 0.8, t.y + 1.6)
+		if absf(a - b) < 1.0:
+			pared = p
+			n = nn
+			piso_a = a
+			piso_b = b
+			break
+	assert(n != Vector3.ZERO, "no hay ninguna pared usable a 12 m de la salida para la prueba de camara")
+	print("camara: pared a %.2f m de la salida, normal %s" % [pared.distance_to(ojo), str(n)])
+
+	# lado A: piche delante de la pared, mirandola de frente (la camara queda a
+	# su espalda, hacia el lado abierto), y un encuadre legal ya asentado. El
+	# piche viene congelado y quieto del bloque anterior, asi que activo sigue
+	# puesto y la camara esta en modo mira.
+	piche.global_position = Vector3(pared.x + n.x * 5.0, piso_a + Util.RADIO, pared.z + n.z * 5.0)
+	await get_tree().process_frame     # que _process saque a impulso de "enjaulado"
+	impulso.mira = atan2(-n.x, -n.z)
+	impulso.encuadrar()
+	for i in 10:
+		await get_tree().process_frame
+
+	# lado B: el piche cruza al otro lado; la camara real quedo del lado viejo y
+	# tiene que cruzar EN SECO, no arrastrarse por dentro de la pared. Sin el
+	# clamp de la posicion real se median 16 frames tapada y 5.5 m de hondo; con
+	# el clamp, cero. Se miran 40 frames: el lerp converge en ~12, el resto es
+	# colchon para que el numero no dependa del dt de la maquina.
+	piche.global_position = Vector3(pared.x - n.x * 0.8, piso_b + Util.RADIO, pared.z - n.z * 0.8)
+	var tapada := 0
+	var hondo := 0.0
+	for i in 40:
+		await get_tree().process_frame
+		var desde: Vector3 = impulso.origen_camara()
+		var q2 := PhysicsRayQueryParameters3D.create(desde, camara.global_position)
+		q2.exclude = mapa.excluir
+		var tapa := esp.intersect_ray(q2)
+		if tapa:
+			tapada += 1
+			hondo = maxf(hondo, tapa["position"].distance_to(camara.global_position))
+	print("camara: tapada en %d de 40 frames, hasta %.2f m detras de la pared" % [tapada, hondo])
+	assert(tapada <= 1, "la camara se arrastra por dentro de la pared en vez de cruzar en seco")
+
+	# se deja todo como arranca un mapa: piche en la salida, mira a la meta
+	_poner_piche(mapa.pos_salida(), false)
+	impulso.reset(mapa.pos_salida(), mapa.pos_meta())
+	impulso.encuadrar()
+
+
 func _tecla(codigo: Key, apretada: bool) -> void:
 	var e := InputEventKey.new()
 	e.keycode = codigo
@@ -972,6 +1061,15 @@ func _self_check() -> void:
 	assert(_angulo_rueda > antes, "el piche no rueda")
 	assert(is_zero_approx(_eje_rueda.dot(piche.linear_velocity.normalized())),
 		"la cara plana del disco no queda perpendicular a la marcha")
+	# y en vuelo la voltereta es a ritmo fijo, no la rodada aparente (que con
+	# el modelo agrandado seria casi nula y el piche volaria tieso)
+	_en_aire = true
+	var en_tierra := _angulo_rueda
+	_escalar_vista(6.0, 0.1)
+	var vuelta := _angulo_rueda - en_tierra
+	print("voltereta en vuelo: %.2f rad en 0.1 s (GIRO_VUELO=%.1f)" % [vuelta, GIRO_VUELO])
+	assert(absf(vuelta - GIRO_VUELO * 0.1) < 0.001, "el piche no da la voltereta en vuelo")
+	_en_aire = false
 	piche.linear_velocity = Vector3.ZERO
 	_angulo_rueda = 0.0
 	var vuelve := piche.global_position
@@ -1089,3 +1187,4 @@ func _self_check() -> void:
 		assert(piche.global_position.distance_to(firme_antes) < 2.0,
 			"el piche no vuelve del agua")
 		_poner_piche(mapa.pos_salida(), false)
+		await _probar_camara()
