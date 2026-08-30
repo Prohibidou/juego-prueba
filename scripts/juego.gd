@@ -422,6 +422,12 @@ func _process(dt: float) -> void:
 		bola.get_global_transform_interpolated().origin), dt)
 
 	barra.value = golpe.fuerza * 100.0
+	# El bloque de estadisticas se apaga desde la escena (UI/Hud, visible). Es
+	# un panel de depuracion -zona, viento, dispersion, metros- que tapaba
+	# media pantalla; oculto no hace falta ni armar la cadena, que se rehacia
+	# entera en CADA frame. Para volver a verlo alcanza con la casilla visible.
+	if not hud.visible:
+		return
 	var p := bola.global_position
 	var b := campo.pos_bandera()
 	var dist := Vector2(p.x - b.x, p.z - b.z).length()
@@ -559,7 +565,9 @@ func _physics_process(dt: float) -> void:
 				# jugador se quedaria encerrado gastando golpes
 				_jaula.tirar_puerta(PORTAZO_EMPUJE, PORTAZO_SUELTA)
 				_jaula.abrir()
-			_aviso("%d m" % roundi(_ultimo), 1.6)
+			# `_ultimo` se sigue midiendo (lo usan el marcador y la tarjeta),
+			# pero ya no se canta en pantalla: sobraba el cartel de metros al
+			# frenar despues de cada impulso.
 	else:
 		_t_lento = 0.0
 		_t_caida = 0.0
